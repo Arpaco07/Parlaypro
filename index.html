@@ -293,7 +293,26 @@ tr:hover td{background:rgba(255,255,255,.012)}
 </div>
 
 <!-- BUILDER -->
-<div class="sh"><span class="sn s4">4</span><h2>Tu Parlay</h2><div class="ln"></div></div>
+<div class="sh"><span class="sn s4">4</span><h2>Tu Parlay</h2><div class="ln"></div>
+  <button onclick="showManualReg()" style="padding:5px 14px;background:var(--bg3);border:1px solid var(--b2);color:var(--tx2);font-size:.7rem;border-radius:7px;cursor:pointer;font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:1px">✏️ REGISTRAR MANUAL</button>
+</div>
+
+<!-- REGISTRO MANUAL -->
+<div id="manualRegBox" style="display:none;background:var(--card);border:1px solid var(--b2);border-radius:13px;padding:16px;margin-bottom:16px">
+  <div style="font-family:'Barlow Condensed',sans-serif;font-size:.9rem;letter-spacing:2px;color:var(--cyan);margin-bottom:12px">✏️ REGISTRO MANUAL DE PARLAY</div>
+  <div style="font-size:.7rem;color:var(--tx3);margin-bottom:12px">Ingresa los picks que apostaste en Play Doit / Caliente directamente</div>
+  <div id="manualLegs" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
+  <button onclick="addManualLeg()" style="padding:6px 14px;background:var(--bg3);border:1px solid var(--b2);color:var(--tx2);font-size:.72rem;border-radius:6px;cursor:pointer;margin-bottom:12px">+ Agregar Equipo/Pick</button>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <div style="position:relative;flex:0 0 150px">
+      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--tx2);font-size:.78rem">$</span>
+      <input type="number" id="manualBet" value="500" min="100" max="1000"
+        style="width:100%;background:var(--bg);border:1px solid var(--b2);border-radius:7px;color:var(--txt);font-family:'JetBrains Mono',monospace;font-size:.92rem;padding:8px 10px 8px 22px;outline:none"/>
+    </div>
+    <button onclick="registerManualParlay()" style="flex:1;padding:9px;background:linear-gradient(135deg,var(--green),#009955);color:#000;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:.82rem;letter-spacing:2px;border:none;border-radius:7px;cursor:pointer">📋 Registrar</button>
+    <button onclick="hideManualReg()" style="padding:9px 14px;background:var(--bg3);border:1px solid var(--b1);color:var(--tx3);font-size:.75rem;border-radius:7px;cursor:pointer">Cancelar</button>
+  </div>
+</div>
 <div class="parlay-panel">
   <div class="plegs" id="plegs"><div class="pempty">Usa un parlay sugerido o agrega picks individuales desde la tabla ↑</div></div>
   <div class="pkpis">
@@ -1380,49 +1399,92 @@ async function loadAll(){
 function renderPicksTable(){
   document.getElementById('picksSection').style.display='block';
   const tbody=document.getElementById('picksBody');
-  tbody.innerHTML=allPicks.map((p,i)=>{
+  if(!allPicks.length){
+    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:16px">Sin picks generados</td></tr>';
+    return;
+  }
+
+  let html='';
+  allPicks.forEach(function(p,i){
     const g=p.game;
     const allP=p.picks||[p.pick];
-    const score=g.homeScore!=null?` <span style="color:var(--tx3)">${g.homeScore}-${g.awayScore}</span>`:'';
-    const pitchers=g.homePitcher?`<div style="font-size:.57rem;color:var(--tx3)">P: ${g.homePitcher} vs ${g.awayPitcher||'?'}</div>`:'';
-    const rec=g._mlbRecord||g._espnRecord;
-    const recStr=rec?`<div style="font-size:.56rem;color:var(--tx3)">${typeof rec==='object'?(rec.home||'')+' vs '+(rec.away||''):rec}</div>`:'';
     const n=allP.length;
+    const score=(g.homeScore!=null)?(' <span style="color:var(--tx3)">'+g.homeScore+'-'+g.awayScore+'</span>'):'';
+    const pitchers=g.homePitcher?('<div style="font-size:.57rem;color:var(--tx3)">P: '+g.homePitcher+' vs '+(g.awayPitcher||'?')+'</div>'):'';
+    const rec=g._mlbRecord||g._espnRecord;
+    let recStr='';
+    if(rec){
+      if(typeof rec==='object') recStr='<div style="font-size:.56rem;color:var(--tx3)">'+(rec.home||'')+' vs '+(rec.away||'')+'</div>';
+      else recStr='<div style="font-size:.56rem;color:var(--tx3)">'+rec+'</div>';
+    }
+    const advice=g._advice?('<div style="font-size:.57rem;color:var(--ora)">'+g._advice+'</div>'):'';
+    const timeDiv=g.timeStr?('<div style="font-size:.57rem;color:var(--tx3)">'+g.timeStr+'</div>'):'';
+    const venueDiv=g.venue?('<div style="font-size:.56rem;color:var(--tx3)">'+g.venue+'</div>'):'';
 
-    return allP.map((pk,pi)=>{
+    allP.forEach(function(pk,pi){
       const pClass=pk.prob>=0.62?'phi':pk.prob>=0.48?'pmd':'plo';
-      const barC=pk.prob>=0.62?'var(--green)':pk.prob>=0.48?'var(--gold)':'var(--red)';
+      const barColor=pk.prob>=0.62?'var(--green)':pk.prob>=0.48?'var(--gold)':'var(--red)';
       const evClass=pk.ev>0.05?'pill-ev-p':pk.ev>0?'pill-ev-u':'pill-ev-n';
-      const cfClass=`cf-${pk.conf==='alta'?'a':pk.conf==='media'?'m':'b'}`;
-      const icon=pk.pick.includes('Gana')||pk.pick==='Empate'?'🏆':
-                 pk.pick.startsWith('Over')||pk.pick.startsWith('Under')?'📊':
-                 pk.pick.startsWith('Ambos')?'⚽':
+      const cfClass='cf-'+(pk.conf==='alta'?'a':pk.conf==='media'?'m':'b');
+      const icon=pk.pick.indexOf('Gana')>=0||pk.pick==='Empate'?'🏆':
+                 pk.pick.indexOf('Over')===0||pk.pick.indexOf('Under')===0?'📊':
+                 pk.pick.indexOf('Ambos')===0?'⚽':
                  pk.src==='Run Line'||pk.src==='Spread'?'📏':'🎯';
-      const isFirst=pi===0;
       const borderStyle=pi>0?'border-top:1px dashed var(--b1)':'';
-      return `<tr style="${borderStyle}">
-        ${isFirst?`<td rowspan="${n}" style="vertical-align:top;padding-top:10px"><span class="lbadge ${g._lg.badge}">${g._lg.name}</span></td>`:''}
-        ${isFirst?`<td rowspan="${n}" style="vertical-align:top;padding-top:10px">
-          <div class="pmatch">${g.home}${score} vs ${g.away}</div>
-          ${pitchers}${recStr}
-          <div style="font-size:.57rem;color:var(--tx3)">${g.timeStr||''}</div>
-          ${g._advice?`<div style="font-size:.57rem;color:var(--ora)">${g._advice}</div>`:''}
-        </td>`:''}
-        <td><div class="pbet">${icon} ${pk.pick}</div><div style="font-size:.56rem;color:var(--tx3)">${pk.src}</div></td>
-        <td><div class="prob-wrap"><span class="${pClass}">${(pk.prob*100).toFixed(0)}%</span><div class="prob-bar"><div class="prob-fill" style="width:${Math.min(pk.prob*100,100).toFixed(0)}%;background:${barC}"></div></div></div></td>
-        <td><span class="pill pill-odds">@${parseFloat(pk.odds||1.9).toFixed(2)}</span></td>
-        <td><span class="pill ${evClass}">EV${pk.ev>0?'+':''}${(pk.ev*100).toFixed(1)}%</span></td>
-        <td><span class="${cfClass}">${pk.conf.toUpperCase()}</span></td>
-        <td><button class="add-btn" id="ab_${i}_${pi}" onclick="addPickSpecific(${i},${pi})" style="font-size:.58rem;padding:2px 7px">+ Agregar</button></td>
-      </tr>`;
-    }).join('');
-  }).join('');
-.join('');
+      const barWidth=Math.min(pk.prob*100,100).toFixed(0);
+      const evStr='EV'+(pk.ev>0?'+':'')+(pk.ev*100).toFixed(1)+'%';
+      const probStr=(pk.prob*100).toFixed(0)+'%';
+      const oddsStr='@'+parseFloat(pk.odds||1.9).toFixed(2);
+
+      html+='<tr style="'+borderStyle+'">';
+
+      // Liga cell — only on first pick of game
+      if(pi===0){
+        html+='<td rowspan="'+n+'" style="vertical-align:top;padding-top:10px">';
+        html+='<span class="lbadge '+g._lg.badge+'">'+g._lg.name+'</span>';
+        html+='</td>';
+      }
+
+      // Partido cell — only on first pick
+      if(pi===0){
+        html+='<td rowspan="'+n+'" style="vertical-align:top;padding-top:10px">';
+        html+='<div class="pmatch">'+g.home+score+' vs '+g.away+'</div>';
+        html+=pitchers+recStr+timeDiv+venueDiv+advice;
+        html+='</td>';
+      }
+
+      // Pick cell
+      html+='<td>';
+      html+='<div class="pbet">'+icon+' '+pk.pick+'</div>';
+      html+='<div style="font-size:.56rem;color:var(--tx3)">'+pk.src+'</div>';
+      html+='</td>';
+
+      // Prob
+      html+='<td>';
+      html+='<div class="prob-wrap">';
+      html+='<span class="'+pClass+'">'+probStr+'</span>';
+      html+='<div class="prob-bar"><div class="prob-fill" style="width:'+barWidth+'%;background:'+barColor+'"></div></div>';
+      html+='</div></td>';
+
+      // Cuota
+      html+='<td><span class="pill pill-odds">'+oddsStr+'</span></td>';
+
+      // EV
+      html+='<td><span class="pill '+evClass+'">'+evStr+'</span></td>';
+
+      // Conf
+      html+='<td><span class="'+cfClass+'">'+pk.conf.toUpperCase()+'</span></td>';
+
+      // Agregar button
+      html+='<td><button class="add-btn" id="ab_'+i+'_'+pi+'" onclick="addPickSpecific('+i+','+pi+')" style="font-size:.58rem;padding:2px 7px">+ Agregar</button></td>';
+
+      html+='</tr>';
+    });
+  });
+  tbody.innerHTML=html;
 }
 
-// ═══════════════════════════════════
-// RENDER PARLAYS
-// ═══════════════════════════════════
+
 function renderParlays(){
   document.getElementById('parlaysSection').style.display='block';
   const grid=document.getElementById('parlaysGrid');
@@ -1677,6 +1739,72 @@ function showOv(on,msg,sub){document.getElementById('overlay').classList.toggle(
 function setOv(msg,sub){document.getElementById('ovMsg').textContent=msg;if(sub)document.getElementById('ovSub').textContent=sub;}
 function setSt(m){document.getElementById('lstatus').textContent=m;}
 function toast(msg,type){const t=document.getElementById('toast');t.textContent=msg;t.className='toast show '+(type||'');setTimeout(()=>t.classList.remove('show'),3800);}
+
+// ══════════════════════════════════════════
+// REGISTRO MANUAL DE PARLAY
+// ══════════════════════════════════════════
+let manualLegCount = 0;
+
+function showManualReg(){
+  document.getElementById('manualRegBox').style.display='block';
+  document.getElementById('manualLegs').innerHTML='';
+  manualLegCount=0;
+  addManualLeg(); // Start with one leg
+}
+function hideManualReg(){
+  document.getElementById('manualRegBox').style.display='none';
+}
+
+function addManualLeg(){
+  manualLegCount++;
+  const n=manualLegCount;
+  const div=document.createElement('div');
+  div.id='mleg_'+n;
+  div.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg3);padding:8px;border-radius:8px;border:1px solid var(--b1)';
+  div.innerHTML=
+    '<input placeholder="Ej: LA Dodgers Gana" id="ml_pick_'+n+'" style="flex:2;min-width:120px;background:var(--bg);border:1px solid var(--b1);border-radius:6px;padding:6px 9px;color:var(--txt);font-size:.72rem;outline:none"/>'+
+    '<input placeholder="Cuota ej: 1.30" type="number" step="0.01" id="ml_odds_'+n+'" style="flex:0 0 90px;background:var(--bg);border:1px solid var(--b1);border-radius:6px;padding:6px 9px;color:var(--txt);font-size:.72rem;outline:none;font-family:monospace"/>'+
+    '<button onclick="document.getElementById('mleg_'+n+'').remove();manualLegCount--" style="padding:4px 8px;background:none;border:1px solid var(--red);color:var(--red);border-radius:5px;cursor:pointer;font-size:.65rem">✕</button>';
+  document.getElementById('manualLegs').appendChild(div);
+}
+
+function registerManualParlay(){
+  const legs=[];
+  let totalOdds=1;
+  // Collect all legs
+  document.querySelectorAll('[id^="mleg_"]').forEach(function(div){
+    const n=div.id.replace('mleg_','');
+    const pick=document.getElementById('ml_pick_'+n)?.value?.trim();
+    const odds=parseFloat(document.getElementById('ml_odds_'+n)?.value);
+    if(pick&&odds>1){
+      legs.push({pick,odds});
+      totalOdds*=odds;
+    }
+  });
+  if(legs.length<2){toast('Agrega al menos 2 picks','err');return;}
+
+  const bet=Math.min(1000,Math.max(100,parseFloat(document.getElementById('manualBet').value)||500));
+  const ret=parseFloat((bet*totalOdds).toFixed(0));
+  // Estimate prob from odds (implied, no margin removal for manual)
+  const probEst=legs.reduce(function(a,l){return a*(1/l.odds);},1);
+  const ev=probEst*totalOdds-1;
+
+  const entry={
+    id:Date.now(),date:selDate,legs:legs.length,
+    summary:legs.map(function(l){return l.pick+'(@'+l.odds.toFixed(2)+')'}).join(' · '),
+    odds:parseFloat(totalOdds.toFixed(2)),
+    prob:parseFloat((probEst*100).toFixed(1)),
+    ev:parseFloat((ev*100).toFixed(1)),
+    bet,ret,pnl:null,status:'pending',
+    manual:true
+  };
+
+  S.history.unshift(entry);
+  S.totalBet=(S.totalBet||0)+bet;
+  save();renderHistory();updateStats();renderChart();
+  hideManualReg();
+  toast('📋 Parlay manual registrado · Pot. $'+ret.toLocaleString('es-MX'),'ok');
+}
 
 function init(){
   document.getElementById('datePicker').value=todayStr();
