@@ -1023,9 +1023,11 @@ function generateAllPicks(game, prediction, odds){
     );
     const [pH, pD, pA] = probs;
 
-    if(odds.home && pH > 0.30) addPick(`${game.home} Gana`, pH, odds.home, 'Mkt H2H');
-    if(odds.draw && pD > 0.15 && game.sport==='soccer') addPick('Empate', pD, odds.draw, 'Mkt H2H');
-    if(odds.away && pA > 0.30) addPick(`${game.away} Gana`, pA, odds.away, 'Mkt H2H');
+    // Siempre agregar ambos equipos sin importar probabilidad
+    // El usuario debe poder elegir cualquier equipo para su parlay
+    if(odds.home) addPick(game.home+' Gana', pH, odds.home, 'Mkt H2H');
+    if(odds.draw && game.sport==='soccer') addPick('Empate', pD, odds.draw, 'Mkt H2H');
+    if(odds.away) addPick(game.away+' Gana', pA, odds.away, 'Mkt H2H');
   }
 
   // ── TOTALS (Over/Under) ──
@@ -1146,7 +1148,22 @@ function generateAllPicks(game, prediction, odds){
     result.push({pick:'Sin datos', prob:0.5, odds:1.90, ev:-0.05, src:'N/D', conf:'baja'});
   }
 
-  return result.slice(0,3);
+  // Always ensure BOTH teams appear as options for user choice
+  // Even if system recommends away team, show home too and vice versa
+  const hasHome = result.some(function(p){ return p.pick.indexOf(game.home)>=0; });
+  const hasAway = result.some(function(p){ return p.pick.indexOf(game.away)>=0; });
+
+  // Add missing team at end if not already in results
+  if(!hasHome && odds && odds.home){
+    var pH2 = adjustedProbs(odds.home?parseFloat(odds.home):null, null, odds.away?parseFloat(odds.away):null)[0];
+    result.push({pick:game.home+' Gana', prob:pH2, odds:parseFloat(odds.home), ev:calcEV(pH2,parseFloat(odds.home)), src:'Alternativo', conf:confidence(pH2,calcEV(pH2,parseFloat(odds.home)))});
+  }
+  if(!hasAway && odds && odds.away){
+    var pA2 = adjustedProbs(odds.home?parseFloat(odds.home):null, null, odds.away?parseFloat(odds.away):null)[2];
+    result.push({pick:game.away+' Gana', prob:pA2, odds:parseFloat(odds.away), ev:calcEV(pA2,parseFloat(odds.away)), src:'Alternativo', conf:confidence(pA2,calcEV(pA2,parseFloat(odds.away)))});
+  }
+
+  return result.slice(0,4); // Show up to 4 picks including both teams
 }
 
 // Compatibilidad: generatePick retorna el primer pick (mejor ganador)
@@ -1794,7 +1811,7 @@ function registerManualParlay(){
     const n=div.id.replace('mleg_','');
     const pick=document.getElementById('ml_pick_'+n)?.value?.trim();
     const odds=parseFloat(document.getElementById('ml_odds_'+n)?.value);
-    if(pick&&odds>1){
+    if(pick&&odds>=1.01){
       legs.push({pick,odds});
       totalOdds*=odds;
     }
