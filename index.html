@@ -931,8 +931,12 @@ function generatePick(game,prediction,odds){
   const totCandidates = []; // Over/Under / totals
 
   // ── 1. Procesar cuotas de mercado (The Odds API) ──
-  if(odds && (odds.home || odds.away)){
-    const probs = adjustedProbs(odds.home, odds.draw, odds.away);
+  if(odds && (odds.home != null || odds.away != null)){
+    const probs = adjustedProbs(
+      odds.home ? parseFloat(odds.home) : null,
+      odds.draw ? parseFloat(odds.draw) : null,
+      odds.away ? parseFloat(odds.away) : null
+    );
 
     // Moneyline candidates
     if(odds.home && probs.home > 0.35){
@@ -982,7 +986,7 @@ function generatePick(game,prediction,odds){
   }
 
   // ── 2. Boost con predicción standings/api-sports ──
-  if(prediction && prediction.home_pct){
+  if(prediction && prediction.home_pct != null && !isNaN(prediction.home_pct)){
     const pH  = prediction.home_pct / 100;
     const pA  = prediction.away_pct / 100;
     const dO  = prediction.derivedOdds;
@@ -1075,48 +1079,142 @@ function defaultLine(sport){
 // GENERATE SUGGESTED PARLAYS (math)
 // ═══════════════════════════════════
 function generateParlays(picks){
-  const sorted=[...picks].sort((a,b)=>b.pick.ev-a.pick.ev);
-  const allSorted=[...picks].sort((a,b)=>b.pick.prob-a.pick.prob);
+  // Ordenar por probabilidad DESC
+  const byProb = [...picks].sort((a,b)=>b.pick.prob - a.pick.prob);
+  // Ordenar por EV DESC (solo picks con prob >= 50%)
+  const byEV   = [...picks].filter(p=>p.pick.prob>=0.50).sort((a,b)=>b.pick.ev - a.pick.ev);
+  // Picks con prob < 50% para agresivo
+  const byEvAll= [...picks].sort((a,b)=>b.pick.ev - a.pick.ev);
+
   const parlays=[];
 
-  // 1. CONSERVADOR — top 2 por probabilidad (sin filtro mínimo estricto)
-  const cons=allSorted.slice(0,3);
-  if(cons.length>=2){
-    const legs=cons.slice(0,2);
-    parlays.push({tipo:'conservador',picks:legs,
-      razon:`Los 2 picks con mayor probabilidad del día. Récords: ${legs.map(p=>p.game._mlbRecord?`${p.game.home} ${p.game._mlbRecord.home} vs ${p.game.away} ${p.game._mlbRecord.away}`:`${p.game.home} vs ${p.game.away}`).join(' · ')}.`});
+  // ── CONSERVADOR ──────────────────────────────────────────
+  // Criterio: prob ≥ 55%, máximo 2-3 legs, cuota moderada
+  // Solo picks que realmente son favoritos
+  const consLegs = byProb.filter(p=>p.pick.prob>=0.55).slice(0,3);
+  if(consLegs.length>=2){
+    const legs = consLegs.slice(0,2);
+    const cP = legs.reduce((a,l)=>a*l.pick.prob,1);
+    const cO = legs.reduce((a,l)=>a*l.pick.odds,1);
+    parlays.push({
+      tipo:'conservador', picks:legs,
+      razon:`Favoritos claros del día (prob ≥55%). Récords: ${legs.map(l=>
+        l.game._mlbRecord?`${l.game.home} ${l.game._mlbRecord.home} vs ${l.game.away} ${l.game._mlbRecord.away}`
+        :`${l.game.home} vs ${l.game.away}`
+      ).join(' · ')}. Prob combinada ${(cP*100).toFixed(0)}%.`
+    });
+  } else {
+    // Si no hay suficientes con 55%, bajar a 52%
+    const fallback = byProb.filter(p=>p.pick.prob>=0.52).slice(0,2);
+    if(fallback.length>=2){
+      const cP = fallback.reduce((a,l)=>a*l.pick.prob,1);
+      parlays.push({
+        tipo:'conservador', picks:fallback,
+        razon:`Los picks más seguros del día (prob ≥52%). Prob combinada ${(cP*100).toFixed(0)}%.`
+      });
+    }
   }
 
-  // 2. BALANCEADO — top 3 por EV (pueden ser negativos, toma los menos negativos)
-  const bal=sorted.slice(0,3);
-  if(bal.length>=2){
-    parlays.push({tipo:'balanceado',picks:bal,
-      razon:`Los ${bal.length} picks con mejor valor esperado del día. EV combinado: ${(bal.reduce((a,p)=>a+p.pick.ev,0)*100/bal.length).toFixed(1)}% promedio.`});
+  // ── BALANCEADO ────────────────────────────────────────────
+  // Criterio: prob ≥ 50% Y EV positivo, 3 legs
+  // Balance real entre probabilidad y valor
+  const balLegs = byEV.filter(p=>p.pick.prob>=0.50&&p.pick.ev>0).slice(0,3);
+  if(balLegs.length>=2){
+    const cP = balLegs.reduce((a,l)=>a*l.pick.prob,1);
+    const avgEv = balLegs.reduce((a,l)=>a+l.pick.ev,0)/balLegs.length;
+    parlays.push({
+      tipo:'balanceado', picks:balLegs,
+      razon:`${balLegs.length} picks con prob ≥50% y EV positivo. EV promedio: ${(avgEv*100).toFixed(1)}%. Balance real entre seguridad y retorno.`
+    });
+  } else {
+    // Si no hay 3 con +EV y prob≥50%, tomar los 2-3 mejores con prob≥48%
+    const fallback2 = byProb.filter(p=>p.pick.prob>=0.48).slice(0,3);
+    if(fallback2.length>=2){
+      const cP = fallback2.reduce((a,l)=>a*l.pick.prob,1);
+      parlays.push({
+        tipo:'balanceado', picks:fallback2,
+        razon:`Los picks más equilibrados del día (prob ≥48%). Prob combinada ${(cP*100).toFixed(0)}%.`
+      });
+    }
   }
 
-  // 3. MULTI-LIGA — mejor pick de cada deporte/liga
-  const sports=[...new Set(picks.map(p=>p.game.sport))];
-  const multi=sports.map(sp=>allSorted.find(p=>p.game.sport===sp)).filter(Boolean).slice(0,4);
-  if(multi.length>=2){
-    parlays.push({tipo:'multiliga',picks:multi,
-      razon:`Mejor pick de cada deporte activo hoy: ${[...new Set(multi.map(p=>p.game._lg.name))].join(' + ')}. Diversificación.`});
+  // ── MULTI-LIGA ────────────────────────────────────────────
+  // Criterio: mejor pick (por prob) de cada deporte activo
+  const sports = [...new Set(picks.map(p=>p.game.sport))];
+  const multiLegs = sports
+    .map(sp=>byProb.find(p=>p.game.sport===sp))
+    .filter(Boolean)
+    .slice(0,4);
+  if(multiLegs.length>=2){
+    const ligaNames = [...new Set(multiLegs.map(p=>p.game._lg.name))].join(' + ');
+    parlays.push({
+      tipo:'multiliga', picks:multiLegs,
+      razon:`Mejor pick de cada deporte activo: ${ligaNames}. Diversificación entre ligas.`
+    });
   }
 
-  // 4. AGRESIVO — top 4 por cuota más alta
-  const agr=[...picks].sort((a,b)=>b.pick.odds-a.pick.odds).slice(0,4);
-  if(agr.length>=2){
-    parlays.push({tipo:'agresivo',picks:agr.slice(0,3),
-      razon:`Los ${Math.min(agr.length,3)} picks con mayor cuota combinada. Mayor riesgo y mayor retorno potencial.`});
+  // ── AGRESIVO ──────────────────────────────────────────────
+  // Criterio: mayor EV aunque la prob sea baja (underdogs con valor)
+  // Solo si hay picks con EV real positivo
+  const agrLegs = byEvAll.filter(p=>p.pick.ev>0.05).slice(0,3);
+  if(agrLegs.length>=2){
+    const cO = agrLegs.reduce((a,l)=>a*l.pick.odds,1);
+    parlays.push({
+      tipo:'agresivo', picks:agrLegs,
+      razon:`Underdogs con mayor valor esperado (+EV >5%). Cuota combinada ${cO.toFixed(2)}x. Mayor riesgo, mayor retorno potencial.`
+    });
   }
 
   return parlays;
 }
 
+
 // ═══════════════════════════════════
 // MAIN LOAD FLOW
 // ═══════════════════════════════════
+// ── CACHE HELPERS ──
+function tryLoadCache(key){
+  try{
+    const raw = localStorage.getItem(key);
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    // Cache válido solo del mismo día
+    const cacheDate = new Date(data.ts);
+    const now = new Date();
+    const sameDay = cacheDate.getFullYear()===now.getFullYear() &&
+                    cacheDate.getMonth()===now.getMonth() &&
+                    cacheDate.getDate()===now.getDate();
+    if(!sameDay){ localStorage.removeItem(key); return null; }
+    console.log(`[Cache] Hit: ${key} (${((Date.now()-data.ts)/60000).toFixed(0)}min atrás)`);
+    return data;
+  }catch(e){ return null; }
+}
+
+function clearCache(){
+  Object.keys(localStorage).filter(k=>k.startsWith('pp_cache_')).forEach(k=>localStorage.removeItem(k));
+  toast('Cache limpiada — próxima carga consultará APIs','ok');
+}
+
 async function loadAll(){
   if(!activeLgs.size){toast('Selecciona al menos una liga','warn');return;}
+
+  // ── CHECK CACHE FIRST ──
+  // Cache key = fecha + ligas activas (ordenadas)
+  const cacheKey = `pp_cache_${selDate}_${[...activeLgs].sort().join('-')}`;
+  const cached = tryLoadCache(cacheKey);
+  if(cached){
+    allGames   = cached.games;
+    allPicks   = cached.picks;
+    suggestedParlays = cached.parlays;
+    parlayLegs = [];
+    updateParlay();
+    renderPicksTable(allPicks, allGames);
+    renderParlays();
+    setSt(`✓ ${allGames.length} partidos · ${allPicks.length} picks (cache) · ${fmtDate(selDate)}`);
+    toast(`⚡ Datos del día cargados desde cache — 0 requests usados`,'ok');
+    return;
+  }
+
   const btn=document.getElementById('btnLoad');
   btn.disabled=true;btn.classList.add('spin');
   showOv(true,'Cargando partidos…','Consultando APIs deportivas');
@@ -1188,10 +1286,22 @@ async function loadAll(){
   // 6. Render
   renderPicksTable();
   renderParlays();
+  // ── SAVE TO CACHE ──
+  try{
+    const cKey=`pp_cache_${selDate}_${[...activeLgs].sort().join('-')}`;
+    const payload=JSON.stringify({games:allGames,picks:allPicks,parlays:suggestedParlays,ts:Date.now()});
+    if(payload.length<500000){
+      localStorage.setItem(cKey,payload);
+      // Limpiar caches viejos (max 6 entradas = 3 días × 2 configs)
+      Object.keys(localStorage).filter(k=>k.startsWith('pp_cache_')).sort().reverse().slice(6).forEach(k=>localStorage.removeItem(k));
+      console.log(`[Cache] Guardado ${cKey} (${(payload.length/1024).toFixed(0)}KB)`);
+    }
+  }catch(e){console.warn('[Cache]',e);}
+
   const withOdds=allGames.filter(g=>g._odds).length;
   const leagueReport=leagueStatus.join(' · ');
   setSt(`✓ ${allGames.length} partidos · ${allPicks.length} picks · ${withOdds} con cuotas reales · ${fmtDate(selDate)}`);
-  toast(`✅ ${allPicks.length} picks listos — ${withOdds}/${allGames.length} con cuotas ESPN/DraftKings`,'ok');
+  toast(`✅ ${allPicks.length} picks listos — ${withOdds}/${allGames.length} con cuotas reales`,'ok');
 }
 
 // ═══════════════════════════════════
