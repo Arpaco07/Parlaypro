@@ -274,7 +274,7 @@ tr:hover td{background:rgba(255,255,255,.012)}
   <div class="sh"><span class="sn s2">2</span><h2>Picks del Día — Mejor Apuesta por Partido</h2><div class="ln"></div></div>
   <div class="picks-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
     <table class="ptable" style="min-width:600px">
-      <thead><tr><th>Liga</th><th>Partido</th><th>Hora</th><th>Mejor Pick</th><th>Prob.</th><th>Cuota</th><th>EV</th><th>Conf.</th><th>Fuente</th><th>Agregar</th></tr></thead>
+      <thead><tr><th>Liga</th><th>Partido</th><th>Pick</th><th>Prob.</th><th>Cuota</th><th>EV</th><th>Conf.</th><th>Agregar</th></tr></thead>
       <tbody id="picksBody"></tbody>
     </table>
   </div>
@@ -376,7 +376,8 @@ const LEAGUES = [
   {key:'nba', name:'NBA',       emoji:'🏀', badge:'lb-nba',type:'bball', src:'basketball', id:12,  season:'2025-2026', active:true},
   {key:'nfl', name:'NFL',       emoji:'🏈', badge:'lb-nfl',type:'football',src:'nfl',      id:1,   season:2025, active:false},
   // ── Amistosos Internacionales (activos AHORA — preparación Mundial 2026)
-  {key:'ami', name:'Amistosos', emoji:'🌐', badge:'lb-ami',type:'world', src:'football',   id:9,   season:2026, active:true},
+  // Amistosos: buscamos por múltiples IDs + endpoint alternativo
+  {key:'ami', name:'Amistosos', emoji:'🌐', badge:'lb-ami',type:'world', src:'friendlies', id:9,   season:2026, active:true},
   // ── UEFA Nations League Finals (junio 2026)
   {key:'unl', name:'Nations Lg',emoji:'🏆', badge:'lb-unl',type:'soccer',src:'football',   id:5,   season:2024, active:false},
 ];
@@ -435,6 +436,43 @@ async function fetchLeague(lg){
   if(lg.src==='football'){
     const d=await safeFetch(`https://v3.football.api-sports.io/fixtures?league=${lg.id}&season=${lg.season}&date=${selDate}`,{'x-apisports-key':APISPORTS});
     return(d?.response||[]).map(r=>({_lg:lg,_id:r.fixture?.id,home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,timeStr:fmtTimeTs(r.fixture?.timestamp),homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,sport:'soccer',venue:''}));
+  }
+  // Amistosos internacionales — buscar en múltiples IDs y endpoint por fecha
+  if(lg.src==='friendlies'){
+    const results=[];
+    // Intentar múltiples league IDs de amistosos en api-sports
+    const friendlyIds=[9,10,11,667,672]; // 9=Friendlies, 10=Friendlies 1, 667/672=UEFA/CONMEBOL friendly
+    await Promise.allSettled(friendlyIds.map(async fid=>{
+      try{
+        const d=await safeFetch(`https://v3.football.api-sports.io/fixtures?league=${fid}&season=2026&date=${selDate}`,{'x-apisports-key':APISPORTS});
+        (d?.response||[]).forEach(r=>{
+          if(!results.find(x=>x._id===r.fixture?.id)){
+            results.push({_lg:lg,_id:r.fixture?.id,
+              home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,
+              away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,
+              timeStr:fmtTimeTs(r.fixture?.timestamp),
+              homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,
+              sport:'soccer',venue:r.fixture?.venue?.name||''});
+          }
+        });
+      }catch(e){}
+    }));
+    // También buscar por tipo=friendly sin liga específica
+    try{
+      const d2=await safeFetch(`https://v3.football.api-sports.io/fixtures?date=${selDate}&type=friendly`,{'x-apisports-key':APISPORTS});
+      (d2?.response||[]).forEach(r=>{
+        if(!results.find(x=>x._id===r.fixture?.id)){
+          results.push({_lg:lg,_id:r.fixture?.id,
+            home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,
+            away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,
+            timeStr:fmtTimeTs(r.fixture?.timestamp),
+            homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,
+            sport:'soccer',venue:r.fixture?.venue?.name||''});
+        }
+      });
+    }catch(e){}
+    console.log(`[Amistosos] Encontrados: ${results.length}`);
+    return results;
   }
   if(lg.src==='mlb'){
     const d=await safeFetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${selDate}&hydrate=team,linescore,probablePitcher`);
@@ -814,7 +852,7 @@ async function loadTheOddsAPI(games){
   await Promise.allSettled(sportKeys.map(async sk=>{
     try{
       // American format para comparar con casas como Play Doit
-      const url=`https://api.the-odds-api.com/v4/sports/${sk}/odds?apiKey=${ODDS_KEY}&regions=us,eu&markets=h2h,totals&dateFormat=iso&oddsFormat=american`;
+      const url=`https://api.the-odds-api.com/v4/sports/${sk}/odds?apiKey=${ODDS_KEY}&regions=us,eu&markets=h2h,totals,btts,spreads&dateFormat=iso&oddsFormat=american`;
       const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
       if(r.ok){const d=await r.json();if(Array.isArray(d)&&d.length)cache[sk]=d;}
     }catch(e){console.warn('[OddsAPI]',sk,e.message);}
@@ -841,6 +879,24 @@ async function loadTheOddsAPI(games){
         });
       });
     });
+    // BTTS (both teams to score) — soccer only
+    let bBTTSy=null, bBTTSn=null;
+    // Run Line / Spread
+    let bSpH=null, bSpA=null, spLine=null;
+
+    (match.bookmakers||[]).forEach(b=>{
+      b.markets?.forEach(m=>{
+        if(m.key==='btts') m.outcomes?.forEach(o=>{
+          if(o.name==='Yes'&&(bBTTSy===null||o.price>bBTTSy)) bBTTSy=o.price;
+          if(o.name==='No' &&(bBTTSn===null||o.price>bBTTSn)) bBTTSn=o.price;
+        });
+        if(m.key==='spreads') m.outcomes?.forEach(o=>{
+          if(o.name===match.home_team&&(bSpH===null||o.price>bSpH)){bSpH=o.price;if(o.point)spLine=o.point;}
+          if(o.name===match.away_team&&(bSpA===null||o.price>bSpA)) bSpA=o.price;
+        });
+      });
+    });
+
     if(bH!==null||bA!==null){
       g._odds={
         home:bH!==null?americanToDecimal(bH).toFixed(2):null,
@@ -848,6 +904,11 @@ async function loadTheOddsAPI(games){
         away:bA!==null?americanToDecimal(bA).toFixed(2):null,
         over:bOv!==null?americanToDecimal(bOv).toFixed(2):null,
         under:bUn!==null?americanToDecimal(bUn).toFixed(2):null,
+        bttsYes:bBTTSy!==null?americanToDecimal(bBTTSy).toFixed(2):null,
+        bttsNo: bBTTSn!==null?americanToDecimal(bBTTSn).toFixed(2):null,
+        spreadHome:bSpH!==null?americanToDecimal(bSpH).toFixed(2):null,
+        spreadAway:bSpA!==null?americanToDecimal(bSpA).toFixed(2):null,
+        spreadLine:spLine,
         homeAmer:bH, awayAmer:bA, drawAmer:bD,
         books:books.slice(0,3), src:'The Odds API'
       };
@@ -913,171 +974,175 @@ function confidence(prob,ev){
 // ═══════════════════════════════════
 // GENERATE PICK per game (pure math)
 // ═══════════════════════════════════
-function generatePick(game,prediction,odds){
-  // ══════════════════════════════════════════════════════════════
-  // LÓGICA DE SELECCIÓN DEL MEJOR PICK
-  //
-  // Prioridad:
-  // 1. Moneyline (ganador) cuando la diferencia de Win% es ≥ 8%
-  // 2. Over/Under solo cuando ambos equipos tienen récords similares
-  //    Y la cuota total justifica el EV
-  // 3. Si hay predicción de api-sports que difiere del mercado → blend
-  //
-  // Regla: el pick del parlay sugerido SÍ puede ser ganador o total
-  // pero la tabla siempre muestra el pick con mejor EV real
-  // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+// generateAllPicks — genera hasta 3 picks por partido
+// Retorna array de picks ordenados por EV desc
+// ══════════════════════════════════════════════════════════
+function generateAllPicks(game, prediction, odds){
+  const picks = [];
 
-  const mlCandidates  = []; // Moneyline / ganador
-  const totCandidates = []; // Over/Under / totals
+  // ── HELPER: calcular prob ajustada y EV ──
+  function addPick(label, prob, oddsD, src){
+    if(!prob||!oddsD||prob<0.20) return;
+    const ev = calcEV(prob, parseFloat(oddsD));
+    picks.push({
+      pick: label,
+      prob: parseFloat(prob.toFixed(4)),
+      odds: parseFloat(parseFloat(oddsD).toFixed(2)),
+      ev:   parseFloat(ev.toFixed(4)),
+      src,
+      conf: confidence(prob, ev)
+    });
+  }
 
-  // ── 1. Procesar cuotas de mercado (The Odds API) ──
-  if(odds && (odds.home != null || odds.away != null)){
+  // ── MERCADO H2H (Ganador/Empate) ──
+  if(odds && (odds.home || odds.away)){
     const probs = adjustedProbs(
       odds.home ? parseFloat(odds.home) : null,
       odds.draw ? parseFloat(odds.draw) : null,
       odds.away ? parseFloat(odds.away) : null
     );
+    const [pH, pD, pA] = probs;
 
-    // Moneyline candidates
-    if(odds.home && probs.home > 0.35){
-      const ev = calcEV(probs.home, parseFloat(odds.home));
-      mlCandidates.push({
-        pick:`${game.home} Gana`, prob:probs.home,
-        odds:parseFloat(odds.home), ev, src:'Cuotas Mkt',
-        homeAmer:odds.homeAmer, awayAmer:odds.awayAmer
-      });
-    }
-    if(odds.draw && probs.draw > 0.18){
-      const ev = calcEV(probs.draw, parseFloat(odds.draw));
-      mlCandidates.push({
-        pick:'Empate', prob:probs.draw,
-        odds:parseFloat(odds.draw), ev, src:'Cuotas Mkt'
-      });
-    }
-    if(odds.away && probs.away > 0.35){
-      const ev = calcEV(probs.away, parseFloat(odds.away));
-      mlCandidates.push({
-        pick:`${game.away} Gana`, prob:probs.away,
-        odds:parseFloat(odds.away), ev, src:'Cuotas Mkt',
-        homeAmer:odds.homeAmer, awayAmer:odds.awayAmer
-      });
-    }
-
-    // Totals — solo agregar si la línea tiene sentido
-    if(odds.over && odds.under){
-      const line  = game._totalsLine || defaultLine(game.sport);
-      const pOver = impliedProb(parseFloat(odds.over));
-      const pUnder= impliedProb(parseFloat(odds.under));
-      // Solo agregar el total más fuerte
-      if(pOver >= pUnder){
-        totCandidates.push({
-          pick:`Over ${line}`, prob:pOver,
-          odds:parseFloat(odds.over), ev:calcEV(pOver,parseFloat(odds.over)),
-          src:'Totales Mkt'
-        });
-      } else {
-        totCandidates.push({
-          pick:`Under ${line}`, prob:pUnder,
-          odds:parseFloat(odds.under), ev:calcEV(pUnder,parseFloat(odds.under)),
-          src:'Totales Mkt'
-        });
-      }
-    }
+    if(odds.home && pH > 0.30) addPick(`${game.home} Gana`, pH, odds.home, 'Mkt H2H');
+    if(odds.draw && pD > 0.15 && game.sport==='soccer') addPick('Empate', pD, odds.draw, 'Mkt H2H');
+    if(odds.away && pA > 0.30) addPick(`${game.away} Gana`, pA, odds.away, 'Mkt H2H');
   }
 
-  // ── 2. Boost con predicción standings/api-sports ──
+  // ── TOTALS (Over/Under) ──
+  if(odds && odds.over && odds.under){
+    const line  = game._totalsLine || defaultLine(game.sport);
+    const pOver = 1/parseFloat(odds.over);
+    const pUnder= 1/parseFloat(odds.under);
+    const label = game.sport==='baseball'? 'Runs' : game.sport==='basketball'? 'Pts' : 'Goles';
+    addPick(`Over ${line} ${label}`,  pOver,  odds.over,  'Mkt Totals');
+    addPick(`Under ${line} ${label}`, pUnder, odds.under, 'Mkt Totals');
+  }
+
+  // ── BTTS — Solo soccer ──
+  if(game.sport==='soccer' && odds?.bttsYes && odds?.bttsNo){
+    const pY = 1/parseFloat(odds.bttsYes);
+    const pN = 1/parseFloat(odds.bttsNo);
+    addPick('Ambos Anotan (Sí)', pY, odds.bttsYes, 'BTTS');
+    addPick('Ambos Anotan (No)', pN, odds.bttsNo,  'BTTS');
+  }
+
+  // ── RUN LINE / SPREAD ──
+  if(odds?.spreadHome && odds?.spreadLine){
+    const line = odds.spreadLine;
+    const pSH = 1/parseFloat(odds.spreadHome);
+    const pSA = odds.spreadAway ? 1/parseFloat(odds.spreadAway) : null;
+    const label = game.sport==='baseball' ? 'Run Line' : 'Spread';
+    addPick(`${game.home} ${label} ${line>0?'+':''}${line}`, pSH, odds.spreadHome, label);
+    if(pSA && odds.spreadAway) addPick(`${game.away} ${label} ${line>0?'-':'+'}${Math.abs(line)}`, pSA, odds.spreadAway, label);
+  }
+
+  // ── PREDICCIÓN API-SPORTS (blending si difiere del mercado) ──
   if(prediction && prediction.home_pct != null && !isNaN(prediction.home_pct)){
-    const pH  = prediction.home_pct / 100;
-    const pA  = prediction.away_pct / 100;
-    const dO  = prediction.derivedOdds;
+    const pH = prediction.home_pct/100;
+    const pA = prediction.away_pct/100;
     if(prediction.advice) game._advice = prediction.advice;
     if(game._espnRecord) game._mlbRecord = game._espnRecord;
 
-    if(odds && (odds.home || odds.away)){
-      // Blend: si predicción difiere del mercado en ≥8%, ajustar prob
-      const mP = adjustedProbs(odds.home, odds.draw, odds.away);
-      if(pH - mP.home > 0.08 && odds.home){
-        const bl = pH*0.55 + mP.home*0.45;
-        mlCandidates.push({
-          pick:`${game.home} Gana`, prob:bl,
-          odds:parseFloat(odds.home), ev:calcEV(bl,parseFloat(odds.home)),
-          src:'Pred+Mkt'
-        });
+    if(odds && (odds.home||odds.away)){
+      const mP = adjustedProbs(
+        odds.home?parseFloat(odds.home):null,
+        odds.draw?parseFloat(odds.draw):null,
+        odds.away?parseFloat(odds.away):null
+      );
+      // Si predicción difiere ≥8% del mercado → agregar blend como opción extra
+      if(pH - mP[0] > 0.08 && odds.home){
+        const bl = pH*0.55 + mP[0]*0.45;
+        addPick(`${game.home} Gana`, bl, odds.home, 'Pred+Mkt');
       }
-      if(pA - mP.away > 0.08 && odds.away){
-        const bl = pA*0.55 + mP.away*0.45;
-        mlCandidates.push({
-          pick:`${game.away} Gana`, prob:bl,
-          odds:parseFloat(odds.away), ev:calcEV(bl,parseFloat(odds.away)),
-          src:'Pred+Mkt'
-        });
+      if(pA - mP[2] > 0.08 && odds.away){
+        const bl = pA*0.55 + mP[2]*0.45;
+        addPick(`${game.away} Gana`, bl, odds.away, 'Pred+Mkt');
       }
-    } else if(dO){
-      // Sin cuotas de mercado — usar derivadas de standings
-      if(pH > pA && dO.home){
-        mlCandidates.push({
-          pick:`${game.home} Gana`, prob:pH,
-          odds:dO.home, ev:calcEV(pH,dO.home), src:prediction.src
-        });
-      } else if(dO.away){
-        mlCandidates.push({
-          pick:`${game.away} Gana`, prob:pA,
-          odds:dO.away, ev:calcEV(pA,dO.away), src:prediction.src
-        });
-      }
+    } else if(prediction.derivedOdds){
+      // Sin cuotas de mercado → usar derivadas
+      const dO = prediction.derivedOdds;
+      if(pH > pA && dO.home) addPick(`${game.home} Gana`, pH, dO.home, prediction.src||'Standings');
+      else if(dO.away)       addPick(`${game.away} Gana`, pA, dO.away, prediction.src||'Standings');
     }
   }
 
-  // ── 3. Seleccionar el MEJOR pick ──
-  // Regla de prioridad:
-  // A) Si hay un ML con prob ≥ 55% y EV positivo → preferir ML (ganador claro)
-  // B) Si los dos equipos son muy parejos (prob 48-52%) → puede ser total
-  // C) Si ningún ML tiene EV positivo → usar el total si tiene EV positivo
-  // D) Si nada tiene EV positivo → el ML con mayor prob (menos malo)
-
-  // Ordenar ML por PROBABILIDAD (no por EV)
-  // Razón: el favorito real es quien tiene mayor prob, aunque su EV sea negativo
-  // Ejemplo: Dodgers -323 → prob 73%, EV -3.8% → DEBE ser el pick, no los Angels
-  const bestML  = mlCandidates.sort((a,b)=>b.prob - a.prob)[0];
-  const bestTot = totCandidates.sort((a,b)=>b.ev   - a.ev)[0];
-
-  let best = null;
-
-  if(bestML && bestTot){
-    const mlIsClear  = bestML.prob >= 0.54;  // Favorito claro (>54% prob)
-    const teamsEven  = bestML.prob < 0.54;   // Equipos parejos (<54%)
-    const totHasEdge = bestTot.ev > 0.03;    // Total con EV real positivo >3%
-
-    if(mlIsClear){
-      // Favorito claro → SIEMPRE mostrar ganador, sin importar EV
-      // Ej: Dodgers 73% vs Angels 27% → "Dodgers Gana" aunque EV sea -3.8%
-      best = bestML;
-    } else if(teamsEven && totHasEdge){
-      // Equipos parejos Y el total tiene valor real → mostrar total
-      best = bestTot;
-    } else {
-      // Default: el ML (favorito relativo)
-      best = bestML;
+  // ── DEDUPLICAR — quedarse con la versión de mejor EV por pick label ──
+  const seen = {};
+  const deduped = [];
+  for(const p of picks){
+    const key = p.pick.replace(/\s+/g,' ').trim();
+    if(!seen[key] || p.ev > seen[key].ev){
+      seen[key] = p;
     }
-  } else {
-    best = bestML || bestTot;
+  }
+  Object.values(seen).forEach(p=>deduped.push(p));
+
+  // ── SELECCIONAR TOP 3 por deporte ──
+  // Regla: siempre incluir el GANADOR (mayor prob entre home/away)
+  // Luego el total más interesante
+  // Luego BTTS o Spread si están disponibles
+
+  // Separar por tipo
+  const mlPicks   = deduped.filter(p=>p.pick.includes('Gana')||p.pick==='Empate');
+  const totPicks  = deduped.filter(p=>p.pick.startsWith('Over')||p.pick.startsWith('Under'));
+  const bttsPicks = deduped.filter(p=>p.pick.startsWith('Ambos'));
+  const spPicks   = deduped.filter(p=>p.src==='Run Line'||p.src==='Spread');
+
+  const result = [];
+
+  // Pick 1: GANADOR — siempre el de mayor probabilidad (no EV)
+  const winner = mlPicks.filter(p=>p.pick.includes('Gana')).sort((a,b)=>b.prob-a.prob)[0];
+  if(winner) result.push(winner);
+
+  // Pick 2: TOTAL más fuerte (Over o Under con mejor EV)
+  const bestTot = totPicks.sort((a,b)=>b.ev-a.ev)[0];
+  if(bestTot) result.push(bestTot);
+
+  // Pick 3 según deporte:
+  if(game.sport==='soccer'){
+    // BTTS si disponible, sino Empate si prob>20%
+    const btts = bttsPicks.sort((a,b)=>b.ev-a.ev)[0];
+    const draw = mlPicks.find(p=>p.pick==='Empate');
+    if(btts) result.push(btts);
+    else if(draw) result.push(draw);
+  } else if(game.sport==='baseball'||game.sport==='football'){
+    // Run Line / Spread
+    const sp = spPicks.sort((a,b)=>b.ev-a.ev)[0];
+    if(sp) result.push(sp);
+  } else if(game.sport==='basketball'){
+    // Solo ganador + total para NBA
   }
 
-  // Fallback absoluto
-  if(!best){
-    return{pick:'Sin datos suficientes',prob:0.5,odds:1.90,ev:-0.05,src:'N/D',conf:'baja'};
+  // Si no hay 3 picks y hay opciones, completar
+  if(result.length < 3){
+    for(const p of deduped.sort((a,b)=>b.ev-a.ev)){
+      if(result.length>=3) break;
+      if(!result.find(r=>r.pick===p.pick)) result.push(p);
+    }
   }
 
-  best.conf = confidence(best.prob, best.ev);
-  return best;
+  // Fallback si nada
+  if(!result.length){
+    result.push({pick:'Sin datos', prob:0.5, odds:1.90, ev:-0.05, src:'N/D', conf:'baja'});
+  }
+
+  return result.slice(0,3);
+}
+
+// Compatibilidad: generatePick retorna el primer pick (mejor ganador)
+function generatePick(game, prediction, odds){
+  const all = generateAllPicks(game, prediction, odds);
+  return all[0] || {pick:'Sin datos', prob:0.5, odds:1.90, ev:-0.05, src:'N/D', conf:'baja'};
 }
 
 // Línea de totals por defecto según deporte
 function defaultLine(sport){
   if(sport==='basketball') return 220.5;
   if(sport==='football')   return 44.5;
-  return 8.5; // baseball default
+  return 8.5;
 }
+
 
 
 // ═══════════════════════════════════
@@ -1276,11 +1341,11 @@ async function loadAll(){
   const withPred=allGames.filter(g=>g._prediction).length;
   setOv('Calculando picks…',`${withPred} predicciones obtenidas`);
 
-  // 4. Generate picks mathematically
+  // 4. Generate picks mathematically — 3 picks per game
   setOv('Calculando picks…','Análisis matemático — EV + Probabilidades');
   allPicks=allGames.map((g,i)=>{
-    const pick=generatePick(g,g._prediction,g._odds);
-    return{idx:i,game:g,pick};
+    const picks=generateAllPicks(g,g._prediction,g._odds);
+    return{idx:i,game:g,pick:picks[0],picks}; // picks[0]=best winner, picks=all 3
   });
 
   // 5. Generate parlays
@@ -1316,31 +1381,43 @@ function renderPicksTable(){
   document.getElementById('picksSection').style.display='block';
   const tbody=document.getElementById('picksBody');
   tbody.innerHTML=allPicks.map((p,i)=>{
-    const g=p.game, pk=p.pick;
-    const pClass=pk.prob>=0.62?'phi':pk.prob>=0.48?'pmd':'plo';
-    const barC=pk.prob>=0.62?'var(--green)':pk.prob>=0.48?'var(--gold)':'var(--red)';
-    const evClass=pk.ev>0.05?'pill-ev-p':pk.ev>0?'pill-ev-u':'pill-ev-n';
-    const cfClass=`cf-${pk.conf==='alta'?'a':pk.conf==='media'?'m':'b'}`;
+    const g=p.game;
+    const allP=p.picks||[p.pick];
     const score=g.homeScore!=null?` <span style="color:var(--tx3)">${g.homeScore}-${g.awayScore}</span>`:'';
-    const pitchers=g.homePitcher?`<div style="font-size:.58rem;color:var(--tx3)">P: ${g.homePitcher} vs ${g.awayPitcher||'?'}</div>`:'';
-    const espnRec=g._espnRecord?`<div style="font-size:.57rem;color:var(--tx3)">${g._espnRecord.home} vs ${g._espnRecord.away}</div>`:'';
-    const advice=g._advice?`<div style="font-size:.58rem;color:var(--ora)">${g._advice}</div>`:'';
-    return`<tr>
-      <td><span class="lbadge ${g._lg.badge}">${g._lg.name}</span></td>
-      <td><div class="pmatch">${g.home}${score} vs ${g.away}</div>${pitchers}${g.venue?`<div style="font-size:.57rem;color:var(--tx3)">${g.venue}</div>`:''}</td>
-      <td style="font-family:monospace;font-size:.63rem;color:var(--tx2);white-space:nowrap">${g.timeStr}</td>
-      <td><div class="pbet">${pk.pick}</div>${advice}</td>
-      <td><div class="prob-wrap"><span class="${pClass}">${(pk.prob*100).toFixed(0)}%</span><div class="prob-bar"><div class="prob-fill" style="width:${(pk.prob*100).toFixed(0)}%;background:${barC}"></div></div></div></td>
-      <td>
-        <span class="pill pill-odds">@${parseFloat(pk.odds||1.9).toFixed(2)}</span>
-        ${pk.homeAmer!=null?`<div style="font-size:.58rem;color:var(--tx3);margin-top:2px">${pk.homeAmer>0?'+':''}${pk.homeAmer}</div>`:''}
-      </td>
-      <td><span class="pill ${evClass}">EV${pk.ev>0?'+':''}${(pk.ev*100).toFixed(1)}%</span></td>
-      <td><span class="${cfClass}">${pk.conf.toUpperCase()}</span></td>
-      <td><span class="src-tag">${pk.src}</span></td>
-      <td><button class="add-btn" id="ab_${i}" onclick="addPick(${i})">+ Agregar</button></td>
-    </tr>`;
+    const pitchers=g.homePitcher?`<div style="font-size:.57rem;color:var(--tx3)">P: ${g.homePitcher} vs ${g.awayPitcher||'?'}</div>`:'';
+    const rec=g._mlbRecord||g._espnRecord;
+    const recStr=rec?`<div style="font-size:.56rem;color:var(--tx3)">${typeof rec==='object'?(rec.home||'')+' vs '+(rec.away||''):rec}</div>`:'';
+    const n=allP.length;
+
+    return allP.map((pk,pi)=>{
+      const pClass=pk.prob>=0.62?'phi':pk.prob>=0.48?'pmd':'plo';
+      const barC=pk.prob>=0.62?'var(--green)':pk.prob>=0.48?'var(--gold)':'var(--red)';
+      const evClass=pk.ev>0.05?'pill-ev-p':pk.ev>0?'pill-ev-u':'pill-ev-n';
+      const cfClass=`cf-${pk.conf==='alta'?'a':pk.conf==='media'?'m':'b'}`;
+      const icon=pk.pick.includes('Gana')||pk.pick==='Empate'?'🏆':
+                 pk.pick.startsWith('Over')||pk.pick.startsWith('Under')?'📊':
+                 pk.pick.startsWith('Ambos')?'⚽':
+                 pk.src==='Run Line'||pk.src==='Spread'?'📏':'🎯';
+      const isFirst=pi===0;
+      const borderStyle=pi>0?'border-top:1px dashed var(--b1)':'';
+      return `<tr style="${borderStyle}">
+        ${isFirst?`<td rowspan="${n}" style="vertical-align:top;padding-top:10px"><span class="lbadge ${g._lg.badge}">${g._lg.name}</span></td>`:''}
+        ${isFirst?`<td rowspan="${n}" style="vertical-align:top;padding-top:10px">
+          <div class="pmatch">${g.home}${score} vs ${g.away}</div>
+          ${pitchers}${recStr}
+          <div style="font-size:.57rem;color:var(--tx3)">${g.timeStr||''}</div>
+          ${g._advice?`<div style="font-size:.57rem;color:var(--ora)">${g._advice}</div>`:''}
+        </td>`:''}
+        <td><div class="pbet">${icon} ${pk.pick}</div><div style="font-size:.56rem;color:var(--tx3)">${pk.src}</div></td>
+        <td><div class="prob-wrap"><span class="${pClass}">${(pk.prob*100).toFixed(0)}%</span><div class="prob-bar"><div class="prob-fill" style="width:${Math.min(pk.prob*100,100).toFixed(0)}%;background:${barC}"></div></div></div></td>
+        <td><span class="pill pill-odds">@${parseFloat(pk.odds||1.9).toFixed(2)}</span></td>
+        <td><span class="pill ${evClass}">EV${pk.ev>0?'+':''}${(pk.ev*100).toFixed(1)}%</span></td>
+        <td><span class="${cfClass}">${pk.conf.toUpperCase()}</span></td>
+        <td><button class="add-btn" id="ab_${i}_${pi}" onclick="addPickSpecific(${i},${pi})" style="font-size:.58rem;padding:2px 7px">+ Agregar</button></td>
+      </tr>`;
+    }).join('');
   }).join('');
+.join('');
 }
 
 // ═══════════════════════════════════
@@ -1395,13 +1472,25 @@ function renderParlays(){
 // ═══════════════════════════════════
 // PARLAY MANAGEMENT
 // ═══════════════════════════════════
-function addPick(i){
-  const p=allPicks[i];if(!p)return;
-  if(parlayLegs.find(l=>l.idx===i)){toast('Ya está en el parlay','warn');return;}
+function addPick(i){ addPickSpecific(i,0); }
+
+function addPickSpecific(i,pi){
+  const p=allPicks[i]; if(!p)return;
+  const pk=(p.picks||[p.pick])[pi]||p.pick;
+  // Check duplicate by match+betType
+  if(parlayLegs.find(l=>l.idx===i&&l.betType===pk.pick)){toast('Este pick ya está en el parlay','warn');return;}
   if(parlayLegs.length>=5){toast('Máximo 5 legs','err');return;}
-  parlayLegs.push({idx:i,match:`${p.game.home} vs ${p.game.away}`,betType:p.pick.pick,prob:p.pick.prob,odds:parseFloat(p.pick.odds||1.9),ev:p.pick.ev,league:p.game._lg.name});
-  const btn=document.getElementById(`ab_${i}`);if(btn){btn.className='add-btn added';btn.textContent='✓ En parlay';}
-  updateParlay();toast(`✅ ${p.game.home} vs ${p.game.away}`,'ok');
+  parlayLegs.push({
+    idx:i, pickIdx:pi,
+    match:`${p.game.home} vs ${p.game.away}`,
+    betType:pk.pick, prob:pk.prob,
+    odds:parseFloat(pk.odds||1.9), ev:pk.ev,
+    league:p.game._lg.name
+  });
+  const btn=document.getElementById(`ab_${i}_${pi}`)||document.getElementById(`ab_${i}`);
+  if(btn){btn.className='add-btn added';btn.textContent='✓';}
+  updateParlay();
+  toast(`✅ ${p.game.home} vs ${p.game.away} — ${pk.pick}`,'ok');
 }
 
 function useParlay(pi){
