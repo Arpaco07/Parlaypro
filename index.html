@@ -456,41 +456,66 @@ async function fetchLeague(lg){
     const d=await safeFetch(`https://v3.football.api-sports.io/fixtures?league=${lg.id}&season=${lg.season}&date=${selDate}`,{'x-apisports-key':APISPORTS});
     return(d?.response||[]).map(r=>({_lg:lg,_id:r.fixture?.id,home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,timeStr:fmtTimeTs(r.fixture?.timestamp),homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,sport:'soccer',venue:''}));
   }
-  // Amistosos internacionales — buscar en múltiples IDs y endpoint por fecha
+  // Amistosos Internacionales FIFA
+  // api-sports los lista en league ID 9 (International Friendlies)
+  // IMPORTANTE: no filtrar por season - algunos no tienen temporada asignada
   if(lg.src==='friendlies'){
     const results=[];
-    // Intentar múltiples league IDs de amistosos en api-sports
-    const friendlyIds=[9,10,11,667,672]; // 9=Friendlies, 10=Friendlies 1, 667/672=UEFA/CONMEBOL friendly
-    await Promise.allSettled(friendlyIds.map(async fid=>{
-      try{
-        const d=await safeFetch(`https://v3.football.api-sports.io/fixtures?league=${fid}&season=2026&date=${selDate}`,{'x-apisports-key':APISPORTS});
-        (d?.response||[]).forEach(r=>{
-          if(!results.find(x=>x._id===r.fixture?.id)){
-            results.push({_lg:lg,_id:r.fixture?.id,
-              home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,
-              away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,
-              timeStr:fmtTimeTs(r.fixture?.timestamp),
-              homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,
-              sport:'soccer',venue:r.fixture?.venue?.name||''});
-          }
-        });
-      }catch(e){}
-    }));
-    // También buscar por tipo=friendly sin liga específica
+    const seen=new Set();
+
+    function addGame(r, leagueOverride){
+      const id=r.fixture?.id;
+      if(!id||seen.has(id))return;
+      seen.add(id);
+      results.push({
+        _lg:leagueOverride||lg,
+        _id:id,
+        home:r.teams?.home?.name||'?', homeId:r.teams?.home?.id,
+        away:r.teams?.away?.name||'?', awayId:r.teams?.away?.id,
+        timeStr:fmtTimeTs(r.fixture?.timestamp),
+        homeScore:r.goals?.home??null, awayScore:r.goals?.away??null,
+        sport:'soccer', venue:r.fixture?.venue?.name||''
+      });
+    }
+
+    // Intento 1: ID 9 sin season (el más importante)
     try{
-      const d2=await safeFetch(`https://v3.football.api-sports.io/fixtures?date=${selDate}&type=friendly`,{'x-apisports-key':APISPORTS});
-      (d2?.response||[]).forEach(r=>{
-        if(!results.find(x=>x._id===r.fixture?.id)){
-          results.push({_lg:lg,_id:r.fixture?.id,
-            home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,
-            away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,
-            timeStr:fmtTimeTs(r.fixture?.timestamp),
-            homeScore:r.goals?.home??null,awayScore:r.goals?.away??null,
-            sport:'soccer',venue:r.fixture?.venue?.name||''});
+      const d=await safeFetch(
+        `https://v3.football.api-sports.io/fixtures?league=9&date=${selDate}`,
+        {'x-apisports-key':APISPORTS}
+      );
+      (d?.response||[]).forEach(r=>addGame(r));
+      console.log('[Amistosos] ID9 sin season:',d?.results||0);
+    }catch(e){}
+
+    // Intento 2: ID 9 con season=2026
+    try{
+      const d=await safeFetch(
+        `https://v3.football.api-sports.io/fixtures?league=9&season=2026&date=${selDate}`,
+        {'x-apisports-key':APISPORTS}
+      );
+      (d?.response||[]).forEach(r=>addGame(r));
+      console.log('[Amistosos] ID9 season 2026:',d?.results||0);
+    }catch(e){}
+
+    // Intento 3: Buscar TODOS los fixtures del día y filtrar solo internacionales
+    // (sin club en el nombre de la competición)
+    try{
+      const d=await safeFetch(
+        `https://v3.football.api-sports.io/fixtures?date=${selDate}&timezone=America/Mexico_City`,
+        {'x-apisports-key':APISPORTS}
+      );
+      (d?.response||[]).forEach(r=>{
+        const leagueName=(r.league?.name||'').toLowerCase();
+        // Solo amistosos internacionales (no de clubes)
+        if(leagueName.includes('friendl')&&!leagueName.includes('club')){
+          addGame(r);
         }
       });
+      console.log('[Amistosos] Búsqueda general:',results.length,'total');
     }catch(e){}
-    console.log(`[Amistosos] Encontrados: ${results.length}`);
+
+    console.log('[Amistosos] Total encontrados:',results.length);
     return results;
   }
   if(lg.src==='mlb'){
@@ -1278,48 +1303,8 @@ function generateParlays(picks){
 // ═══════════════════════════════════
 // MAIN LOAD FLOW
 // ═══════════════════════════════════
-// ── CACHE HELPERS ──
-function tryLoadCache(key){
-  try{
-    const raw = localStorage.getItem(key);
-    if(!raw) return null;
-    const data = JSON.parse(raw);
-    // Cache válido solo del mismo día
-    const cacheDate = new Date(data.ts);
-    const now = new Date();
-    const sameDay = cacheDate.getFullYear()===now.getFullYear() &&
-                    cacheDate.getMonth()===now.getMonth() &&
-                    cacheDate.getDate()===now.getDate();
-    if(!sameDay){ localStorage.removeItem(key); return null; }
-    console.log(`[Cache] Hit: ${key} (${((Date.now()-data.ts)/60000).toFixed(0)}min atrás)`);
-    return data;
-  }catch(e){ return null; }
-}
-
-function clearCache(){
-  Object.keys(localStorage).filter(k=>k.startsWith('pp_cache_')).forEach(k=>localStorage.removeItem(k));
-  toast('Cache limpiada — próxima carga consultará APIs','ok');
-}
-
 async function loadAll(){
   if(!activeLgs.size){toast('Selecciona al menos una liga','warn');return;}
-
-  // ── CHECK CACHE FIRST ──
-  // Cache key = fecha + ligas activas (ordenadas)
-  const cacheKey = `pp_cache_${selDate}_${[...activeLgs].sort().join('-')}`;
-  const cached = tryLoadCache(cacheKey);
-  if(cached){
-    allGames   = cached.games;
-    allPicks   = cached.picks;
-    suggestedParlays = cached.parlays;
-    parlayLegs = [];
-    updateParlay();
-    renderPicksTable(allPicks, allGames);
-    renderParlays();
-    setSt(`✓ ${allGames.length} partidos · ${allPicks.length} picks (cache) · ${fmtDate(selDate)}`);
-    toast(`⚡ Datos del día cargados desde cache — 0 requests usados`,'ok');
-    return;
-  }
 
   const btn=document.getElementById('btnLoad');
   btn.disabled=true;btn.classList.add('spin');
@@ -1392,18 +1377,6 @@ async function loadAll(){
   // 6. Render
   renderPicksTable();
   renderParlays();
-  // ── SAVE TO CACHE ──
-  try{
-    const cKey=`pp_cache_${selDate}_${[...activeLgs].sort().join('-')}`;
-    const payload=JSON.stringify({games:allGames,picks:allPicks,parlays:suggestedParlays,ts:Date.now()});
-    if(payload.length<500000){
-      localStorage.setItem(cKey,payload);
-      // Limpiar caches viejos (max 6 entradas = 3 días × 2 configs)
-      Object.keys(localStorage).filter(k=>k.startsWith('pp_cache_')).sort().reverse().slice(6).forEach(k=>localStorage.removeItem(k));
-      console.log(`[Cache] Guardado ${cKey} (${(payload.length/1024).toFixed(0)}KB)`);
-    }
-  }catch(e){console.warn('[Cache]',e);}
-
   const withOdds=allGames.filter(g=>g._odds).length;
   const leagueReport=leagueStatus.join(' · ');
   setSt(`✓ ${allGames.length} partidos · ${allPicks.length} picks · ${withOdds} con cuotas reales · ${fmtDate(selDate)}`);
