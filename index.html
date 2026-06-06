@@ -1035,24 +1035,29 @@ function generatePick(game,prediction,odds){
   // C) Si ningún ML tiene EV positivo → usar el total si tiene EV positivo
   // D) Si nada tiene EV positivo → el ML con mayor prob (menos malo)
 
-  const bestML  = mlCandidates.sort((a,b)=>b.ev-a.ev)[0];
-  const bestTot = totCandidates.sort((a,b)=>b.ev-a.ev)[0];
+  // Ordenar ML por PROBABILIDAD (no por EV)
+  // Razón: el favorito real es quien tiene mayor prob, aunque su EV sea negativo
+  // Ejemplo: Dodgers -323 → prob 73%, EV -3.8% → DEBE ser el pick, no los Angels
+  const bestML  = mlCandidates.sort((a,b)=>b.prob - a.prob)[0];
+  const bestTot = totCandidates.sort((a,b)=>b.ev   - a.ev)[0];
 
   let best = null;
 
   if(bestML && bestTot){
-    const mlIsClear = bestML.prob >= 0.54; // favorito claro
-    const totHasEdge = bestTot.ev > bestML.ev + 0.02; // total tiene EV 2% mejor
+    const mlIsClear  = bestML.prob >= 0.54;  // Favorito claro (>54% prob)
+    const teamsEven  = bestML.prob < 0.54;   // Equipos parejos (<54%)
+    const totHasEdge = bestTot.ev > 0.03;    // Total con EV real positivo >3%
 
     if(mlIsClear){
-      // Favorito claro → siempre mostrar ganador
+      // Favorito claro → SIEMPRE mostrar ganador, sin importar EV
+      // Ej: Dodgers 73% vs Angels 27% → "Dodgers Gana" aunque EV sea -3.8%
       best = bestML;
-    } else if(totHasEdge && bestTot.ev > 0){
-      // Equipos parejos Y el total tiene ventaja real → mostrar total
+    } else if(teamsEven && totHasEdge){
+      // Equipos parejos Y el total tiene valor real → mostrar total
       best = bestTot;
     } else {
-      // Default: mejor EV entre los dos
-      best = bestML.ev >= bestTot.ev ? bestML : bestTot;
+      // Default: el ML (favorito relativo)
+      best = bestML;
     }
   } else {
     best = bestML || bestTot;
