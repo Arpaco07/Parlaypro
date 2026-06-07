@@ -1056,60 +1056,102 @@ function generateAllPicks(game, prediction, odds){
   }
 
   // ── TOTALS (Over/Under) ──
+  const line = (odds && odds._totalsLine) || game._totalsLine || defaultLine(game.sport);
+  const label = game.sport==='baseball'?'Runs':game.sport==='basketball'?'Pts':'Goles';
+
   if(odds && odds.over && odds.under){
-    const line  = game._totalsLine || defaultLine(game.sport);
+    // Con cuotas reales de mercado
     const pOver = 1/parseFloat(odds.over);
     const pUnder= 1/parseFloat(odds.under);
-    const label = game.sport==='baseball'? 'Runs' : game.sport==='basketball'? 'Pts' : 'Goles';
-    addPick(`Over ${line} ${label}`,  pOver,  odds.over,  'Mkt Totals');
-    addPick(`Under ${line} ${label}`, pUnder, odds.under, 'Mkt Totals');
+    addPick('Over '+line+' '+label,  pOver,  odds.over,  'Mkt Totals');
+    addPick('Under '+line+' '+label, pUnder, odds.under, 'Mkt Totals');
+  } else {
+    // Sin cuotas de mercado — usar probabilidad 50/50 con cuota estándar
+    // Over/Under suele estar cerca de 50% en béisbol y basketball
+    const stdOdds = game.sport==='soccer'?1.85:1.91; // cuota estándar de la industria
+    addPick('Over '+line+' '+label,  0.50, stdOdds, 'Est. Línea');
+    addPick('Under '+line+' '+label, 0.50, stdOdds, 'Est. Línea');
   }
 
   // ── BTTS — Solo soccer ──
-  if(game.sport==='soccer' && odds?.bttsYes && odds?.bttsNo){
-    const pY = 1/parseFloat(odds.bttsYes);
-    const pN = 1/parseFloat(odds.bttsNo);
-    addPick('Ambos Anotan (Sí)', pY, odds.bttsYes, 'BTTS');
-    addPick('Ambos Anotan (No)', pN, odds.bttsNo,  'BTTS');
+  if(game.sport==='soccer'){
+    if(odds && odds.bttsYes && odds.bttsNo){
+      addPick('Ambos Anotan (Sí)', 1/parseFloat(odds.bttsYes), odds.bttsYes, 'BTTS');
+      addPick('Ambos Anotan (No)', 1/parseFloat(odds.bttsNo),  odds.bttsNo,  'BTTS');
+    } else {
+      // Estimación estándar: ~55% de partidos tienen ambos equipos anotando
+      addPick('Ambos Anotan (Sí)', 0.55, 1.75, 'Est. BTTS');
+      addPick('Ambos Anotan (No)', 0.45, 2.10, 'Est. BTTS');
+    }
   }
 
   // ── RUN LINE / SPREAD ──
-  if(odds?.spreadHome && odds?.spreadLine){
-    const line = odds.spreadLine;
-    const pSH = 1/parseFloat(odds.spreadHome);
-    const pSA = odds.spreadAway ? 1/parseFloat(odds.spreadAway) : null;
-    const label = game.sport==='baseball' ? 'Run Line' : 'Spread';
-    addPick(`${game.home} ${label} ${line>0?'+':''}${line}`, pSH, odds.spreadHome, label);
-    if(pSA && odds.spreadAway) addPick(`${game.away} ${label} ${line>0?'-':'+'}${Math.abs(line)}`, pSA, odds.spreadAway, label);
+  if(game.sport==='baseball'||game.sport==='football'||game.sport==='basketball'){
+    if(odds && odds.spreadHome && odds.spreadLine){
+      const spLine = odds.spreadLine;
+      const pSH = 1/parseFloat(odds.spreadHome);
+      const pSA = odds.spreadAway ? 1/parseFloat(odds.spreadAway) : null;
+      const lbl = game.sport==='baseball'?'Run Line':'Spread';
+      addPick(game.home+' '+lbl+' '+(spLine>0?'+':'')+spLine, pSH, odds.spreadHome, lbl);
+      if(pSA&&odds.spreadAway) addPick(game.away+' '+lbl+' '+(spLine>0?'-':'+')+(Math.abs(spLine)), pSA, odds.spreadAway, lbl);
+    } else if(prediction && prediction.home_pct){
+      // Sin spread de mercado: usar -1.5/+1.5 con probabilidad ajustada
+      const lbl = game.sport==='baseball'?'Run Line':'Spread';
+      const favProb = Math.max(prediction.home_pct, prediction.away_pct)/100;
+      const isFavHome = prediction.home_pct >= prediction.away_pct;
+      if(favProb > 0.55){
+        // El favorito a -1.5 tiene menor probabilidad que su ML
+        const favMinusProb = Math.max(0.35, favProb - 0.18);
+        const underdogPlusProb = 1 - favMinusProb;
+        const favOdds = parseFloat((1/favMinusProb * 1.05).toFixed(2));
+        const dogOdds = parseFloat((1/underdogPlusProb * 1.05).toFixed(2));
+        if(isFavHome){
+          addPick(game.home+' '+lbl+' -1.5', favMinusProb, favOdds, 'Est. '+lbl);
+          addPick(game.away+' '+lbl+' +1.5', underdogPlusProb, dogOdds, 'Est. '+lbl);
+        } else {
+          addPick(game.away+' '+lbl+' -1.5', favMinusProb, favOdds, 'Est. '+lbl);
+          addPick(game.home+' '+lbl+' +1.5', underdogPlusProb, dogOdds, 'Est. '+lbl);
+        }
+      }
+    }
   }
 
-  // ── PREDICCIÓN API-SPORTS (blending si difiere del mercado) ──
+  // ── PREDICCIÓN API-SPORTS ──
   if(prediction && prediction.home_pct != null && !isNaN(prediction.home_pct)){
     const pH = prediction.home_pct/100;
+    const pD = (prediction.draw_pct||0)/100;
     const pA = prediction.away_pct/100;
     if(prediction.advice) game._advice = prediction.advice;
     if(game._espnRecord) game._mlbRecord = game._espnRecord;
+    const dO = prediction.derivedOdds;
 
     if(odds && (odds.home||odds.away)){
+      // Con cuotas reales: blend si predicción difiere ≥8%
       const mP = adjustedProbs(
         odds.home?parseFloat(odds.home):null,
         odds.draw?parseFloat(odds.draw):null,
         odds.away?parseFloat(odds.away):null
       );
-      // Si predicción difiere ≥8% del mercado → agregar blend como opción extra
-      if(pH - mP[0] > 0.08 && odds.home){
-        const bl = pH*0.55 + mP[0]*0.45;
-        addPick(`${game.home} Gana`, bl, odds.home, 'Pred+Mkt');
+      if(pH - mP[0] > 0.08 && odds.home) addPick(game.home+' Gana', pH*0.55+mP[0]*0.45, odds.home, 'Pred+Mkt');
+      if(pA - mP[2] > 0.08 && odds.away) addPick(game.away+' Gana', pA*0.55+mP[2]*0.45, odds.away, 'Pred+Mkt');
+    } else if(dO){
+      // Sin cuotas de mercado → generar TODOS los picks con derived odds
+      if(dO.home) addPick(game.home+' Gana', pH, dO.home, prediction.src||'Standings');
+      if(dO.away) addPick(game.away+' Gana', pA, dO.away, prediction.src||'Standings');
+      if(game.sport==='soccer'&&pD>0.15&&dO.draw) addPick('Empate', pD, dO.draw, prediction.src||'Standings');
+      // Over/Under estimado
+      var line2=defaultLine(game.sport);
+      var lbl2=game.sport==='baseball'?'Runs':game.sport==='basketball'?'Pts':game.sport==='football'?'Pts':'Goles';
+      addPick('Over '+line2+' '+lbl2, 0.50, 1.91, 'Est.');
+      addPick('Under '+line2+' '+lbl2, 0.50, 1.91, 'Est.');
+      if(game.sport==='soccer'){
+        addPick('Ambos Anotan (Sí)', 0.50, 1.85, 'Est.');
+        addPick('Ambos Anotan (No)', 0.50, 1.95, 'Est.');
       }
-      if(pA - mP[2] > 0.08 && odds.away){
-        const bl = pA*0.55 + mP[2]*0.45;
-        addPick(`${game.away} Gana`, bl, odds.away, 'Pred+Mkt');
+      if(game.sport==='baseball'&&dO.home>1.3){
+        addPick(game.home+' Run Line -1.5', pH*0.65, parseFloat((dO.home*0.55).toFixed(2)), 'Est. RL');
+        addPick(game.away+' Run Line +1.5', pA*1.20, parseFloat((dO.away*0.55).toFixed(2)), 'Est. RL');
       }
-    } else if(prediction.derivedOdds){
-      // Sin cuotas de mercado → usar derivadas
-      const dO = prediction.derivedOdds;
-      if(pH > pA && dO.home) addPick(`${game.home} Gana`, pH, dO.home, prediction.src||'Standings');
-      else if(dO.away)       addPick(`${game.away} Gana`, pA, dO.away, prediction.src||'Standings');
     }
   }
 
@@ -1124,71 +1166,65 @@ function generateAllPicks(game, prediction, odds){
   }
   Object.values(seen).forEach(p=>deduped.push(p));
 
-  // ── SELECCIONAR TOP 3 por deporte ──
-  // Regla: siempre incluir el GANADOR (mayor prob entre home/away)
-  // Luego el total más interesante
-  // Luego BTTS o Spread si están disponibles
-
-  // Separar por tipo
+  // ── MOSTRAR TODOS LOS PICKS — usuario elige el que quiere ──
+  // Separar por categoría
   const mlPicks   = deduped.filter(p=>p.pick.includes('Gana')||p.pick==='Empate');
   const totPicks  = deduped.filter(p=>p.pick.startsWith('Over')||p.pick.startsWith('Under'));
   const bttsPicks = deduped.filter(p=>p.pick.startsWith('Ambos'));
-  const spPicks   = deduped.filter(p=>p.src==='Run Line'||p.src==='Spread');
+  const spPicks   = deduped.filter(p=>p.src.includes('Run Line')||p.src.includes('Spread'));
 
   const result = [];
 
-  // Pick 1: GANADOR — siempre el de mayor probabilidad (no EV)
-  const winner = mlPicks.filter(p=>p.pick.includes('Gana')).sort((a,b)=>b.prob-a.prob)[0];
-  if(winner) result.push(winner);
+  // ── GANADORES: siempre mostrar AMBOS equipos + empate ──
+  // Ordenar: favorito primero, luego underdog
+  const homeWin = mlPicks.find(p=>p.pick===game.home+' Gana');
+  const awayWin = mlPicks.find(p=>p.pick===game.away+' Gana');
+  const draw    = mlPicks.find(p=>p.pick==='Empate');
 
-  // Pick 2: TOTAL más fuerte (Over o Under con mejor EV)
-  const bestTot = totPicks.sort((a,b)=>b.ev-a.ev)[0];
-  if(bestTot) result.push(bestTot);
+  if(homeWin) result.push(homeWin);
+  if(game.sport==='soccer' && draw) result.push(draw);
+  if(awayWin) result.push(awayWin);
 
-  // Pick 3 según deporte:
+  // ── TOTALS: Over Y Under (ambas opciones) ──
+  const overPick  = totPicks.find(p=>p.pick.startsWith('Over'));
+  const underPick = totPicks.find(p=>p.pick.startsWith('Under'));
+  if(overPick)  result.push(overPick);
+  if(underPick) result.push(underPick);
+
+  // ── ESPECIALES por deporte ──
   if(game.sport==='soccer'){
-    // BTTS si disponible, sino Empate si prob>20%
-    const btts = bttsPicks.sort((a,b)=>b.ev-a.ev)[0];
-    const draw = mlPicks.find(p=>p.pick==='Empate');
-    if(btts) result.push(btts);
-    else if(draw) result.push(draw);
-  } else if(game.sport==='baseball'||game.sport==='football'){
-    // Run Line / Spread
-    const sp = spPicks.sort((a,b)=>b.ev-a.ev)[0];
-    if(sp) result.push(sp);
-  } else if(game.sport==='basketball'){
-    // Solo ganador + total para NBA
+    // BTTS Sí y No
+    bttsPicks.forEach(p=>result.push(p));
+  }
+  if(game.sport==='baseball'||game.sport==='football'){
+    // Run Line / Spread ambas direcciones
+    spPicks.forEach(p=>result.push(p));
   }
 
-  // Si no hay 3 picks y hay opciones, completar
-  if(result.length < 3){
-    for(const p of deduped.sort((a,b)=>b.ev-a.ev)){
-      if(result.length>=3) break;
-      if(!result.find(r=>r.pick===p.pick)) result.push(p);
+  // ── ASEGURAR que ambos equipos siempre aparezcan ──
+  // Si no hay cuotas de mercado, generar con derived odds
+  if(!result.find(p=>p.pick===game.home+' Gana')){
+    const dO=prediction?.derivedOdds;
+    if(dO?.home){
+      const ph=(prediction?.home_pct||50)/100;
+      result.unshift({pick:game.home+' Gana',prob:ph,odds:dO.home,ev:calcEV(ph,dO.home),src:prediction?.src||'Standings',conf:confidence(ph,calcEV(ph,dO.home))});
+    }
+  }
+  if(!result.find(p=>p.pick===game.away+' Gana')){
+    const dO=prediction?.derivedOdds;
+    if(dO?.away){
+      const pa=(prediction?.away_pct||50)/100;
+      result.push({pick:game.away+' Gana',prob:pa,odds:dO.away,ev:calcEV(pa,dO.away),src:prediction?.src||'Standings',conf:confidence(pa,calcEV(pa,dO.away))});
     }
   }
 
-  // Fallback si nada
+  // ── FALLBACK si nada ──
   if(!result.length){
-    result.push({pick:'Sin datos', prob:0.5, odds:1.90, ev:-0.05, src:'N/D', conf:'baja'});
+    result.push({pick:game.home+' Gana',prob:0.50,odds:1.90,ev:-0.05,src:'Sin datos',conf:'baja'});
+    result.push({pick:game.away+' Gana',prob:0.50,odds:1.90,ev:-0.05,src:'Sin datos',conf:'baja'});
   }
 
-  // Always ensure BOTH teams appear as options for user choice
-  // Even if system recommends away team, show home too and vice versa
-  const hasHome = result.some(function(p){ return p.pick.indexOf(game.home)>=0; });
-  const hasAway = result.some(function(p){ return p.pick.indexOf(game.away)>=0; });
-
-  // Add missing team at end if not already in results
-  if(!hasHome && odds && odds.home){
-    var pH2 = adjustedProbs(odds.home?parseFloat(odds.home):null, null, odds.away?parseFloat(odds.away):null)[0];
-    result.push({pick:game.home+' Gana', prob:pH2, odds:parseFloat(odds.home), ev:calcEV(pH2,parseFloat(odds.home)), src:'Alternativo', conf:confidence(pH2,calcEV(pH2,parseFloat(odds.home)))});
-  }
-  if(!hasAway && odds && odds.away){
-    var pA2 = adjustedProbs(odds.home?parseFloat(odds.home):null, null, odds.away?parseFloat(odds.away):null)[2];
-    result.push({pick:game.away+' Gana', prob:pA2, odds:parseFloat(odds.away), ev:calcEV(pA2,parseFloat(odds.away)), src:'Alternativo', conf:confidence(pA2,calcEV(pA2,parseFloat(odds.away)))});
-  }
-
-  return result.slice(0,4); // Show up to 4 picks including both teams
+  return result; // Todos los picks disponibles sin límite
 }
 
 // Compatibilidad: generatePick retorna el primer pick (mejor ganador)
