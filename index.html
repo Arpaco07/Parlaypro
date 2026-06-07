@@ -1838,6 +1838,86 @@ function toast(msg,type){const t=document.getElementById('toast');t.textContent=
 // ══════════════════════════════════════════
 let manualLegCount = 0;
 
+// ══════════════════════════════════════
+// MAIN LOAD FUNCTION
+// ══════════════════════════════════════
+async function loadAll(){
+  if(!activeLgs.size){toast('Selecciona al menos una liga','warn');return;}
+
+  const btn=document.getElementById('btnLoad');
+  btn.disabled=true;btn.classList.add('spin');
+  showOv(true,'Cargando partidos…','Consultando APIs deportivas');
+  allGames=[];allPicks=[];parlayLegs=[];suggestedParlays=[];
+  updateParlay();
+  document.getElementById('picksSection').style.display='none';
+  document.getElementById('parlaysSection').style.display='none';
+  document.getElementById('aiBox').classList.remove('show');
+
+  // 1. Load games per active league
+  const active=LEAGUES.filter(l=>activeLgs.has(l.key));
+  const leagueStatus=[];
+  for(const lg of active){
+    setOv('Cargando '+lg.name+'…',lg.src+' · '+selDate);
+    try{
+      const g=await fetchLeague(lg);
+      allGames.push(...g);
+      leagueStatus.push(lg.emoji+' '+lg.name+': '+g.length+' partidos');
+      console.log('['+lg.name+']',g.length,'games');
+    }catch(e){
+      leagueStatus.push(lg.emoji+' '+lg.name+': ERROR');
+      console.warn('['+lg.name+'] ERROR:',e);
+    }
+  }
+
+  if(!allGames.length){
+    showOv(false);btn.disabled=false;btn.classList.remove('spin');
+    toast('Sin partidos para '+fmtDate(selDate),'warn');
+    setSt('Sin partidos · '+fmtDate(selDate));
+    return;
+  }
+
+  // 2. Load odds (The Odds API)
+  setOv('Cargando cuotas reales…','The Odds API · DraftKings · Bet365');
+  try{
+    await Promise.race([
+      loadTheOddsAPI(allGames),
+      new Promise(r=>setTimeout(r,7000))
+    ]);
+  }catch(e){console.warn('[Odds]',e);}
+
+  // 3. Load predictions per sport
+  const gamesNeedingPred=allGames.filter(g=>g._id&&!g._manual);
+  setOv('Cargando predicciones…',gamesNeedingPred.length+' partidos');
+  try{
+    await Promise.race([
+      Promise.allSettled(gamesNeedingPred.map(async g=>{
+        try{g._prediction=await fetchPrediction(g);}catch(e){}
+      })),
+      new Promise(r=>setTimeout(r,8000))
+    ]);
+  }catch(e){}
+
+  // 4. Generate picks
+  setOv('Calculando picks…','Análisis matemático');
+  allPicks=allGames.map((g,i)=>{
+    const picks=generateAllPicks(g,g._prediction,g._odds);
+    return{idx:i,game:g,pick:picks[0],picks};
+  });
+
+  // 5. Generate parlays
+  suggestedParlays=generateParlays(allPicks);
+
+  showOv(false);btn.disabled=false;btn.classList.remove('spin');
+
+  // 6. Render
+  renderPicksTable();
+  renderParlays();
+
+  const withOdds=allGames.filter(g=>g._odds).length;
+  setSt('✓ '+allGames.length+' partidos · '+allPicks.length+' picks · '+withOdds+' con cuotas reales · '+fmtDate(selDate));
+  toast('✅ '+allPicks.length+' picks listos — '+fmtDate(selDate),'ok');
+}
+
 function showManualReg(){
   document.getElementById('manualRegBox').style.display='block';
   document.getElementById('manualLegs').innerHTML='';
