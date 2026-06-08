@@ -485,9 +485,10 @@ const LEAGUES = [
 // ═══════════════════════════════════
 // STATE
 // ═══════════════════════════════════
-let S = loadState();
-let activeLgs = new Set(LEAGUES.filter(l=>l.active).map(l=>l.key));
-let selDate   = todayStr();
+// Variables — inicializadas después de que las funciones estén definidas
+let S = {balance:0,totalBet:0,history:[],startDate:''};
+let activeLgs = new Set();
+let selDate   = '';
 let allGames  = [];
 let allPicks  = [];
 let parlayLegs = [];
@@ -2071,7 +2072,12 @@ function registerManualParlay(){
 }
 
 function init(){
-  document.getElementById('datePicker').value=todayStr();
+  // Inicializar variables que dependen de funciones
+  S = loadState();
+  activeLgs = new Set(LEAGUES.filter(l=>l.active).map(l=>l.key));
+  selDate = todayStr();
+
+  document.getElementById('datePicker').value=selDate;
   renderLeagueTags();renderHistory();updateStats();renderChart();
   // Cargar historial desde Supabase al iniciar
   sbLoad().then(rows=>{
