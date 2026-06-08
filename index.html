@@ -1788,6 +1788,12 @@ function registerParlay(){
   parlayLegs=[];document.querySelectorAll('.add-btn.added').forEach(b=>{b.className='add-btn';b.textContent='+ Agregar';});updateParlay();
 }
 
+function resolveBtn(btn){
+  var id=parseInt(btn.dataset.id);
+  var result=btn.dataset.res;
+  resolve(id,result);
+}
+
 function resolve(id,result){
   const e=S.history.find(h=>h.id===id);if(!e||e.status!=='pending')return;
   e.status=result;
@@ -1809,7 +1815,10 @@ function renderHistory(){
     const tag=e.status==='win'?`<span class="tag tw">GANÓ</span>`:e.status==='loss'?`<span class="tag tl">PERDIÓ</span>`:`<span class="tag tp">PEND</span>`;
     const pnl=e.pnl===null?'—':`<span class="${e.pnl>=0?'ppos':'pneg'}">${e.pnl>=0?'+':'-'}$${Math.abs(e.pnl).toLocaleString('es-MX')}</span>`;
     const ec=e.ev>0?'var(--green)':'var(--red)';
-    const acts=e.status==='pending'?`<button class="abt w" onclick="resolve(${e.id},'win')">✓ Ganó</button><button class="abt l" onclick="resolve(${e.id},'loss')">✕ Perdió</button>`:'—';
+    const acts=e.status==='pending'
+      ?'<button class="abt w" data-id="'+e.id+'" data-res="win" onclick="resolveBtn(this)">✓ Ganó</button>'
+       +'<button class="abt l" data-id="'+e.id+'" data-res="loss" onclick="resolveBtn(this)">✕ Perdió</button>'
+      :'—';
     return`<tr>
       <td style="color:var(--tx2)">${fmtDate(e.date)}</td>
       <td style="max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${e.summary}">${e.legs} legs</td>
@@ -1824,41 +1833,72 @@ function renderHistory(){
 
 // ── Render history cards for mobile ──
 function renderHistCards(){
-  const el = document.getElementById('histCards');
+  var el = document.getElementById('histCards');
   if(!el) return;
+  el.innerHTML = '';
   if(!S.history.length){
-    el.innerHTML = '<div style="color:var(--tx3);font-size:.75rem;text-align:center;padding:16px">Sin apuestas registradas</div>';
+    var empty = document.createElement('div');
+    empty.style.cssText = 'color:var(--tx3);font-size:.75rem;text-align:center;padding:16px';
+    empty.textContent = 'Sin apuestas registradas';
+    el.appendChild(empty);
     return;
   }
-  el.innerHTML = S.history.map(e=>{
-    const isPending = e.status==='pending';
-    const isWin     = e.status==='win';
-    const isLoss    = e.status==='loss';
-    const pnlStr    = e.pnl===null ? '' : (e.pnl>=0?'+':'-')+'$'+Math.abs(e.pnl).toLocaleString('es-MX');
-    const evC       = e.ev>0?'var(--green)':'var(--red)';
-    const btns = isPending
-      ? '<button class="hist-btn-win" onclick="resolve('+e.id+','win')">✓ GANÓ</button>'
-        +'<button class="hist-btn-loss" onclick="resolve('+e.id+','loss')">✕ PERDIÓ</button>'
-      : '<div class="hist-result '+(isWin?'win':'loss')+'">'+(isWin?'✓ GANÓ':'✕ PERDIÓ')+' '+pnlStr+'</div>';
-    return '<div class="hist-card">'
-      +'<div class="hist-card-top">'
-        +'<div>'
-          +'<div style="font-size:.78rem;font-weight:700;color:var(--txt)">'+e.legs+' legs · '+fmtDate(e.date)+'</div>'
-          +'<div style="font-size:.62rem;color:var(--tx3)">'+(e.manual?'✏️ Manual':'')+'</div>'
-        +'</div>'
-        +'<div style="text-align:right">'
-          +'<div style="font-family:monospace;font-size:.9rem;color:var(--gold)">'+e.odds+'x</div>'
-          +'<div style="font-size:.65rem;color:'+evC+'">EV '+(e.ev>0?'+':'')+e.ev+'%</div>'
-        +'</div>'
+  S.history.forEach(function(e){
+    var isPending = e.status==='pending';
+    var isWin     = e.status==='win';
+    var pnlStr    = e.pnl===null ? '' : (e.pnl>=0?'+':'-')+'$'+Math.abs(e.pnl).toLocaleString('es-MX');
+
+    var card = document.createElement('div');
+    card.className = 'hist-card';
+
+    // Top row
+    var top = document.createElement('div');
+    top.className = 'hist-card-top';
+    top.innerHTML =
+      '<div>'
+        +'<div style="font-size:.78rem;font-weight:700;color:var(--txt)">'+e.legs+' legs · '+fmtDate(e.date)+'</div>'
+        +'<div style="font-size:.62rem;color:var(--tx3)">'+(e.manual?'✏️ Manual':'')+'</div>'
       +'</div>'
-      +'<div class="hist-card-mid">'
-        +'Apuesta: <strong style="color:var(--txt)">$'+e.bet.toLocaleString('es-MX')+'</strong> · '
-        +'Potencial: <strong style="color:var(--green)">$'+e.ret.toLocaleString('es-MX')+'</strong>'
-      +'</div>'
-      +'<div class="hist-card-btns">'+btns+'</div>'
-    +'</div>';
-  }).join('');
+      +'<div style="text-align:right">'
+        +'<div style="font-family:monospace;font-size:.9rem;color:var(--gold)">'+e.odds+'x</div>'
+        +'<div style="font-size:.65rem;color:'+(e.ev>0?'var(--green)':'var(--red)')+'">EV '+(e.ev>0?'+':'')+e.ev+'%</div>'
+      +'</div>';
+    card.appendChild(top);
+
+    // Mid row
+    var mid = document.createElement('div');
+    mid.className = 'hist-card-mid';
+    mid.textContent = 'Apuesta: $'+e.bet.toLocaleString('es-MX')+' · Potencial: $'+e.ret.toLocaleString('es-MX');
+    card.appendChild(mid);
+
+    // Buttons or result
+    var btnsDiv = document.createElement('div');
+    btnsDiv.className = 'hist-card-btns';
+
+    if(isPending){
+      var btnW = document.createElement('button');
+      btnW.className = 'hist-btn-win';
+      btnW.textContent = '✓ GANÓ';
+      btnW.onclick = (function(id){ return function(){ resolve(id,'win'); }; })(e.id);
+
+      var btnL = document.createElement('button');
+      btnL.className = 'hist-btn-loss';
+      btnL.textContent = '✕ PERDIÓ';
+      btnL.onclick = (function(id){ return function(){ resolve(id,'loss'); }; })(e.id);
+
+      btnsDiv.appendChild(btnW);
+      btnsDiv.appendChild(btnL);
+    } else {
+      var res = document.createElement('div');
+      res.className = 'hist-result '+(isWin?'win':'loss');
+      res.textContent = (isWin?'✓ GANÓ':'✕ PERDIÓ')+' '+pnlStr;
+      btnsDiv.appendChild(res);
+    }
+    card.appendChild(btnsDiv);
+    el.appendChild(card);
+  });
 }
+
 
 function updateStats(){
   const res=S.history.filter(e=>e.status!=='pending');
