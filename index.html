@@ -188,35 +188,36 @@ tr:hover td{background:rgba(255,255,255,.012)}
 @media(max-width:768px){
   .kpis{grid-template-columns:repeat(2,1fr)}
   .pkpis{grid-template-columns:repeat(2,1fr)}
-  /* Tabla picks → ocultar columnas no esenciales en móvil */
-  .ptable th:nth-child(3),
-  .ptable td:nth-child(3){display:none} /* hora — va en card */
-  .ptable th:nth-child(7),
-  .ptable td:nth-child(7){display:none} /* EV */
-  .ptable th:nth-child(8),
-  .ptable td:nth-child(8){display:none} /* Conf */
-  .ptable th:nth-child(9),
-  .ptable td:nth-child(9){display:none} /* Fuente */
+  .ptable th:nth-child(3),.ptable td:nth-child(3){display:none}
+  .ptable th:nth-child(7),.ptable td:nth-child(7){display:none}
+  .ptable th:nth-child(8),.ptable td:nth-child(8){display:none}
+  .ptable th:nth-child(9),.ptable td:nth-child(9){display:none}
   .ptable{font-size:.68rem}
-  .ptable td:nth-child(2){max-width:130px}
-  .ptable td:nth-child(4){max-width:120px}
-  /* Header chips más pequeños */
   .chip .v{font-size:.75rem}
   .chip{padding:2px 7px}
-  /* Parlay cards stack */
   .parlays-grid{grid-template-columns:1fr}
+  /* Historial: ocultar tabla, mostrar cards */
+  .hist-wrap table{display:none}
+  .hist-cards{display:flex !important;flex-direction:column;gap:10px;padding:12px}
 }
 @media(max-width:480px){
-  .ptable th:nth-child(3),
-  .ptable td:nth-child(3){display:none}
-  .ptable th:nth-child(5),
-  .ptable td:nth-child(5){display:none} /* prob */
-  .ptable th:nth-child(6),
-  .ptable td:nth-child(6){display:none} /* cuota */
+  .ptable th:nth-child(5),.ptable td:nth-child(5){display:none}
+  .ptable th:nth-child(6),.ptable td:nth-child(6){display:none}
   .logo{font-size:1.1rem;letter-spacing:2px}
   header{padding:0 10px}
   main{padding:10px}
 }
+/* Historia cards — siempre ocultas en desktop, visibles en móvil */
+.hist-cards{display:none}
+.hist-card{background:var(--bg3);border:1px solid var(--b1);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.hist-card-top{display:flex;justify-content:space-between;align-items:center}
+.hist-card-mid{font-size:.7rem;color:var(--tx2);line-height:1.5}
+.hist-card-btns{display:flex;gap:8px;margin-top:4px}
+.hist-btn-win{flex:1;padding:9px;background:linear-gradient(135deg,var(--green),#009955);color:#000;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:.8rem;letter-spacing:1px;border:none;border-radius:7px;cursor:pointer}
+.hist-btn-loss{flex:1;padding:9px;background:linear-gradient(135deg,var(--red),#880000);color:#fff;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:.8rem;letter-spacing:1px;border:none;border-radius:7px;cursor:pointer}
+.hist-result{text-align:center;font-family:'JetBrains Mono',monospace;font-size:.85rem;font-weight:700;padding:6px;border-radius:6px}
+.hist-result.win{background:rgba(0,230,118,.1);color:var(--green)}
+.hist-result.loss{background:rgba(255,23,68,.08);color:var(--red)}
 </style>
 </head>
 <body>
@@ -333,6 +334,8 @@ tr:hover td{background:rgba(255,255,255,.012)}
 <div class="hist-wrap">
   <table><thead><tr><th>Fecha</th><th>Parlay</th><th>Legs</th><th>Cuota</th><th>EV</th><th>Apuesta</th><th>Retorno</th><th>P&L</th><th>Estado</th><th>Acción</th></tr></thead>
   <tbody id="histBody"><tr><td colspan="10" style="text-align:center;color:var(--tx3);padding:22px;font-size:.75rem">Sin apuestas registradas</td></tr></tbody></table>
+  <!-- Cards para móvil -->
+  <div class="hist-cards" id="histCards"></div>
 </div>
 
 <div class="sh"><span class="sn s1">📈</span><h2>Evolución del Balance</h2><div class="ln"></div></div>
@@ -463,7 +466,7 @@ const LEAGUES = [
   // Solo MLB, LMB y Mundial 26 activos por default
   {key:'wc',  name:'Mundial 26', emoji:'🌍', badge:'lb-wc',  type:'world',   src:'football',   id:1,   season:2026, active:true},
   {key:'mlb', name:'MLB',        emoji:'⚾',  badge:'lb-mlb', type:'bball',   src:'mlb',        id:1,   season:2026, active:true},
-  {key:'lmb', name:'LMB',        emoji:'🇲🇽⚾',badge:'lb-lmb', type:'bball',   src:'baseball',   id:23,  season:2026, active:true},
+  {key:'lmb', name:'LMB',        emoji:'🇲🇽⚾',badge:'lb-lmb', type:'bball',   src:'baseball',   id:23,  season:2026, active:false},
   // ── DISPONIBLES (desactivados) ──
   {key:'ami', name:'Amistosos',  emoji:'🌐', badge:'lb-ami', type:'world',   src:'friendlies', id:9,   season:2026, active:false},
   {key:'mx',  name:'Liga MX',    emoji:'🇲🇽', badge:'lb-mx',  type:'soccer',  src:'football',   id:262, season:2025, active:false},
@@ -601,8 +604,37 @@ async function fetchLeague(lg){
     return(d?.dates||[]).flatMap(dt=>(dt.games||[]).map(g=>({_lg:lg,_id:g.gamePk,home:g.teams?.home?.team?.name||'?',homeId:g.teams?.home?.team?.id,away:g.teams?.away?.team?.name||'?',awayId:g.teams?.away?.team?.id,timeStr:fmtTimeISO(g.gameDate),homeScore:g.teams?.home?.score??null,awayScore:g.teams?.away?.score??null,sport:'baseball',venue:g.venue?.name||'',homePitcher:g.teams?.home?.probablePitcher?.fullName||null,awayPitcher:g.teams?.away?.probablePitcher?.fullName||null})));
   }
   if(lg.src==='baseball'){
-    const d=await safeFetch(`https://v1.baseball.api-sports.io/games?league=${lg.id}&season=${lg.season}&date=${selDate}`,{'x-apisports-key':APISPORTS});
-    return(d?.response||[]).map(r=>({_lg:lg,_id:r.id,home:r.teams?.home?.name||'?',homeId:r.teams?.home?.id,away:r.teams?.away?.name||'?',awayId:r.teams?.away?.id,timeStr:fmtTimeISO(r.date),homeScore:r.scores?.home?.total??null,awayScore:r.scores?.away?.total??null,sport:'baseball',venue:''}));
+    // LMB: intentar con season y sin season (api-sports a veces no requiere season)
+    const mapGame = r=>({
+      _lg:lg, _id:r.id,
+      home:r.teams?.home?.name||'?', homeId:r.teams?.home?.id,
+      away:r.teams?.away?.name||'?', awayId:r.teams?.away?.id,
+      timeStr:fmtTimeISO(r.date),
+      homeScore:r.scores?.home?.total??null,
+      awayScore:r.scores?.away?.total??null,
+      sport:'baseball', venue:''
+    });
+    // Intento 1: con season
+    const d1=await safeFetch(
+      `https://v1.baseball.api-sports.io/games?league=${lg.id}&season=${lg.season}&date=${selDate}`,
+      {'x-apisports-key':APISPORTS}
+    );
+    if(d1?.response?.length) return d1.response.map(mapGame);
+    // Intento 2: sin season (solo league + date)
+    const d2=await safeFetch(
+      `https://v1.baseball.api-sports.io/games?league=${lg.id}&date=${selDate}`,
+      {'x-apisports-key':APISPORTS}
+    );
+    if(d2?.response?.length) return d2.response.map(mapGame);
+    // Intento 3: solo fecha sin filtro de liga
+    const d3=await safeFetch(
+      `https://v1.baseball.api-sports.io/games?date=${selDate}`,
+      {'x-apisports-key':APISPORTS}
+    );
+    // Filtrar solo LMB (league id 23)
+    const lmbGames=(d3?.response||[]).filter(r=>r.league?.id===23||r.league?.id===lg.id);
+    console.log('[LMB] Intento3 total:',d3?.results,'LMB filtrados:',lmbGames.length);
+    return lmbGames.map(mapGame);
   }
   if(lg.src==='basketball'){
     const d=await safeFetch(`https://v1.basketball.api-sports.io/games?league=${lg.id}&season=${lg.season}&date=${selDate}`,{'x-apisports-key':APISPORTS});
@@ -1769,6 +1801,7 @@ function resolve(id,result){
 // HISTORY / STATS / CHART
 // ═══════════════════════════════════
 function renderHistory(){
+  renderHistCards(); // always render mobile cards too
   const b=document.getElementById('histBody');
   if(!S.history.length){b.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--tx3);padding:20px;font-size:.73rem">Sin apuestas</td></tr>';return;}
   b.innerHTML=S.history.map(e=>{
@@ -1785,6 +1818,44 @@ function renderHistory(){
       <td style="font-family:monospace">$${e.bet.toLocaleString('es-MX')}</td>
       <td style="font-family:monospace;color:var(--green)">$${e.ret.toLocaleString('es-MX')}</td>
       <td>${pnl}</td><td>${tag}</td><td>${acts}</td></tr>`;
+  }).join('');
+}
+
+// ── Render history cards for mobile ──
+function renderHistCards(){
+  const el = document.getElementById('histCards');
+  if(!el) return;
+  if(!S.history.length){
+    el.innerHTML = '<div style="color:var(--tx3);font-size:.75rem;text-align:center;padding:16px">Sin apuestas registradas</div>';
+    return;
+  }
+  el.innerHTML = S.history.map(e=>{
+    const isPending = e.status==='pending';
+    const isWin     = e.status==='win';
+    const isLoss    = e.status==='loss';
+    const pnlStr    = e.pnl===null ? '' : (e.pnl>=0?'+':'-')+'$'+Math.abs(e.pnl).toLocaleString('es-MX');
+    const evC       = e.ev>0?'var(--green)':'var(--red)';
+    const btns = isPending
+      ? '<button class="hist-btn-win" onclick="resolve('+e.id+','win')">✓ GANÓ</button>'
+        +'<button class="hist-btn-loss" onclick="resolve('+e.id+','loss')">✕ PERDIÓ</button>'
+      : '<div class="hist-result '+(isWin?'win':'loss')+'">'+(isWin?'✓ GANÓ':'✕ PERDIÓ')+' '+pnlStr+'</div>';
+    return '<div class="hist-card">'
+      +'<div class="hist-card-top">'
+        +'<div>'
+          +'<div style="font-size:.78rem;font-weight:700;color:var(--txt)">'+e.legs+' legs · '+fmtDate(e.date)+'</div>'
+          +'<div style="font-size:.62rem;color:var(--tx3)">'+(e.manual?'✏️ Manual':'')+'</div>'
+        +'</div>'
+        +'<div style="text-align:right">'
+          +'<div style="font-family:monospace;font-size:.9rem;color:var(--gold)">'+e.odds+'x</div>'
+          +'<div style="font-size:.65rem;color:'+evC+'">EV '+(e.ev>0?'+':'')+e.ev+'%</div>'
+        +'</div>'
+      +'</div>'
+      +'<div class="hist-card-mid">'
+        +'Apuesta: <strong style="color:var(--txt)">$'+e.bet.toLocaleString('es-MX')+'</strong> · '
+        +'Potencial: <strong style="color:var(--green)">$'+e.ret.toLocaleString('es-MX')+'</strong>'
+      +'</div>'
+      +'<div class="hist-card-btns">'+btns+'</div>'
+    +'</div>';
   }).join('');
 }
 
