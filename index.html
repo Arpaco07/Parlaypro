@@ -697,45 +697,35 @@ async function fetchLeague(lg){
 // Returns: {home_pct, draw_pct, away_pct, winner, advice}
 // ═══════════════════════════════════
 async function fetchPrediction(game){
-  // ══════════════════════════════════════════════════════
-  // CHECKLIST DE PREDICCIONES POR DEPORTE
-  // ══════════════════════════════════════════════════════
-  // ✅ SOCCER    → api-sports /predictions?fixture= (porcentajes + advice)
-  // ✅ MLB       → statsapi.mlb.com /standings (Win% real de temporada 2026)
-  // ✅ LMB       → api-sports baseball /standings?league=23&season=2026
-  // ✅ NBA       → api-sports basketball /standings?league=12&season=2024-2025
-  // ✅ NFL       → api-sports nfl /standings?league=1&season=2025
-  // ══════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════
+  // PREDICCIONES POR DEPORTE
+  // ══════════════════════════════════════════════════════════
 
-  // Helper: derive fair odds from probability (5% house margin)
-  const fairOdds=(p)=>p>0?parseFloat((1/p*1.05).toFixed(2)):1.9;
-
-  // Helper: build result object
-  const mkResult=(pH,pA,homeN,awayN,advice,src,tH,tA)=>{
-    const adjH=Math.min(pH+0.03,0.90); // home court/field advantage
-    const total=adjH+(pA||0)||1;
-    const fH=adjH/total, fA=(pA||0)/total;
+  // Helper
+  function mkResult(pH, pA, homeN, awayN, advice, src, tH, tA){
+    var adjH = Math.min(pH + 0.03, 0.90);
+    var total = adjH + (pA||0) || 1;
+    var fH = adjH/total, fA = (pA||0)/total;
     return{
-      home_pct:Math.round(fH*100),
-      draw_pct:0,
-      away_pct:Math.round(fA*100),
-      winner:fH>=fA?homeN:awayN,
-      advice,
-      src,
-      derivedOdds:{home:fairOdds(fH),away:fairOdds(fA)},
-      record:tH&&tA?{home:tH,away:tA}:null
+      home_pct: Math.round(fH*100),
+      draw_pct: Math.max(0, Math.round((1-fH-fA)*100)),
+      away_pct: Math.round(fA*100),
+      winner: fH>=fA ? homeN : awayN,
+      advice: advice,
+      src: src,
+      derivedOdds:{
+        home: parseFloat((1/fH*1.08).toFixed(2)),
+        away: parseFloat((1/fA*1.08).toFixed(2))
+      },
+      record: (tH&&tA) ? {home:tH, away:tA} : null
     };
-  };
+  }
 
-  // ─────────────────────────────────────────────────────
-  // ✅ SOCCER — api-sports /predictions endpoint
-  // Para juegos del Mundial desde ESPN, usar FIFA rankings como proxy
-  // ─────────────────────────────────────────────────────
-  if(game.sport==='soccer'&&game._id){
-    // Si es un juego de ESPN (no tiene ID numérico de api-sports), usar rankings FIFA
-    if(typeof game._id==='string'&&game._id.startsWith('espn_')){
-      // FIFA Rankings aproximados para el Mundial 2026
-      const FIFA_RANK={
+  // ── SOCCER / MUNDIAL ──
+  if(game.sport==='soccer'){
+    // ESPN games: usar FIFA Rankings
+    if(game._id && typeof game._id === 'string' && game._id.startsWith('espn_')){
+      var FIFA_RANK = {
         'Argentina':1,'France':2,'England':3,'Spain':4,'Brazil':5,
         'Portugal':6,'Belgium':7,'Netherlands':8,'Germany':9,'Italy':10,
         'Uruguay':11,'Croatia':12,'Morocco':13,'Switzerland':14,'United States':15,
@@ -743,238 +733,169 @@ async function fetchPrediction(game){
         'Austria':21,'Ecuador':22,'Korea Republic':23,'Hungary':24,'Turkey':25,
         'Czechia':26,'Australia':27,'Ukraine':28,'Sweden':29,'Poland':30,
         'Serbia':31,'Chile':32,'Peru':33,'Norway':34,'Paraguay':35,
-        'Saudi Arabia':36,'Côte d'Ivoire':37,'Algeria':38,'Canada':39,
+        'Saudi Arabia':36,"Côte d'Ivoire":37,'Algeria':38,'Canada':39,
         'Iran':40,'Egypt':41,'South Africa':42,'Nigeria':43,'Cameroon':44,
         'Ghana':45,'Tunisia':46,'DR Congo':47,'Haiti':48,'Bolivia':49,
         'New Zealand':50,'Bosnia and Herzegovina':51,'Iraq':52,'Qatar':53,
         'Panama':54,'Jamaica':55,'El Salvador':56,'Cape Verde':57,
         'Jordan':58,'Curaçao':59,'Uzbekistan':60
       };
-      const rankH=FIFA_RANK[game.home]||50;
-      const rankA=FIFA_RANK[game.away]||50;
-      // Invertir ranking: menor número = mejor equipo
-      const strengthH=1/rankH, strengthA=1/rankA;
-      const total=strengthH+strengthA;
-      const pH=strengthH/total, pA=strengthA/total;
-      // Home advantage +3% para sede (USA/Canada/Mexico)
-      const hosts=['United States','Mexico','Canada'];
-      const adjH=hosts.includes(game.home)?Math.min(pH+0.05,0.92):pH+0.02;
-      const adjA=hosts.includes(game.away)?Math.min(pA+0.05,0.92):pA;
-      const totalAdj=adjH+adjA;
-      const fH=adjH/totalAdj, fA=adjA/totalAdj;
+      var rH = FIFA_RANK[game.home]||50;
+      var rA = FIFA_RANK[game.away]||50;
+      var sH = 1/rH, sA = 1/rA, tot = sH+sA;
+      var pH2 = sH/tot, pA2 = sA/tot;
+      var hosts = ['United States','Mexico','Canada'];
+      var adjH2 = hosts.includes(game.home) ? Math.min(pH2+0.05,0.90) : pH2;
+      var adjA2 = hosts.includes(game.away) ? Math.min(pA2+0.05,0.90) : pA2;
+      var tot2 = adjH2+adjA2;
+      var fH2 = adjH2/tot2, fA2 = adjA2/tot2;
       return{
-        home_pct:Math.round(fH*100),
-        draw_pct:Math.round((1-fH-fA)*100)||15,
-        away_pct:Math.round(fA*100),
-        winner:fH>=fA?game.home:game.away,
-        advice:`FIFA Rankings: ${game.home} #${rankH} vs ${game.away} #${rankA}`,
-        src:'FIFA Rankings',
+        home_pct: Math.round(fH2*100),
+        draw_pct: Math.max(5, 100-Math.round(fH2*100)-Math.round(fA2*100)),
+        away_pct: Math.round(fA2*100),
+        winner: fH2>=fA2 ? game.home : game.away,
+        advice: 'FIFA Ranking: '+game.home+' #'+rH+' vs '+game.away+' #'+rA,
+        src: 'FIFA Rankings',
         derivedOdds:{
-          home:parseFloat((1/fH*1.08).toFixed(2)),
-          away:parseFloat((1/fA*1.08).toFixed(2))
+          home: parseFloat((1/fH2*1.08).toFixed(2)),
+          away: parseFloat((1/fA2*1.08).toFixed(2))
         }
       };
     }
-    try{
-      const d=await safeFetch(
-        `https://v3.football.api-sports.io/predictions?fixture=${game._id}`,
-        {'x-apisports-key':APISPORTS}
-      );
-      const p=d?.response?.[0]?.predictions;
-      if(p&&p.percent){
-        const pH=parseFloat(p.percent.home)||0;
-        const pD=parseFloat(p.percent.draw)||0;
-        const pA=parseFloat(p.percent.away)||0;
-        return{
-          home_pct:pH, draw_pct:pD, away_pct:pA,
-          winner:p.winner?.name||null,
-          advice:p.advice||null,
-          src:'API-Sports Soccer Pred',
-          derivedOdds:{
-            home:fairOdds(pH/100),
-            draw:pD>0?fairOdds(pD/100):null,
-            away:fairOdds(pA/100)
-          }
-        };
-      }
-    }catch(e){console.warn('soccer pred',e);}
-  }
-
-  // ─────────────────────────────────────────────────────
-  // ✅ MLB — statsapi.mlb.com /standings (público, sin key)
-  // Endpoint: /api/v1/standings?leagueId=103,104&season=2026&hydrate=team
-  // Response: records[].teamRecords[]{team.id, wins, losses, winningPercentage}
-  // ─────────────────────────────────────────────────────
-  if(game.sport==='baseball'&&game._lg.src==='mlb'&&game.homeId&&game.awayId){
-    try{
-      const st=await safeFetch(
-        `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026&hydrate=team`
-      );
-      const teams={};
-      for(const div of st?.records||[]){
-        for(const t of div?.teamRecords||[]){
-          const id=t.team?.id;
-          if(id) teams[id]={
-            w:t.wins||0, l:t.losses||0,
-            pct:parseFloat(t.winningPercentage)||0.500
+    // api-sports predictions endpoint
+    if(game._id){
+      try{
+        var d = await safeFetch(
+          'https://v3.football.api-sports.io/predictions?fixture='+game._id,
+          {'x-apisports-key':APISPORTS}
+        );
+        var p = d&&d.response&&d.response[0]&&d.response[0].predictions;
+        if(p&&p.percent){
+          return{
+            home_pct: parseFloat(p.percent.home)||0,
+            draw_pct: parseFloat(p.percent.draw)||0,
+            away_pct: parseFloat(p.percent.away)||0,
+            winner: p.winner&&p.winner.name||null,
+            advice: p.advice||null,
+            src: 'API-Sports Pred',
+            derivedOdds:{
+              home: parseFloat((100/Math.max(parseFloat(p.percent.home)||50,1)*1.08/100).toFixed(2)),
+              away: parseFloat((100/Math.max(parseFloat(p.percent.away)||50,1)*1.08/100).toFixed(2))
+            }
           };
         }
-      }
-      const tH=teams[game.homeId], tA=teams[game.awayId];
-      if(tH&&tA){
-        game._mlbRecord={home:`${tH.w}-${tH.l}`,away:`${tA.w}-${tA.l}`};
-        return mkResult(tH.pct,tA.pct,game.home,game.away,
-          `Récords: ${game.home} ${tH.w}-${tH.l} (${(tH.pct*100).toFixed(0)}%) vs ${game.away} ${tA.w}-${tA.l} (${(tA.pct*100).toFixed(0)}%)`,
-          'MLB Standings 2026',tH.w+'-'+tH.l,tA.w+'-'+tA.l);
-      }
-    }catch(e){console.warn('mlb standings',e);}
+      }catch(e){ console.warn('soccer pred',e); }
+    }
   }
 
-  // ─────────────────────────────────────────────────────
-  // ✅ LMB — api-sports baseball /standings
-  // Endpoint: /standings?league=23&season=2026
-  // Response: response[][][]{team.id, games.win.total, games.played}
-  // ─────────────────────────────────────────────────────
-  if(game.sport==='baseball'&&game._lg.src==='baseball'&&game.homeId&&game.awayId){
+  // ── MLB ──
+  if(game.sport==='baseball' && game._lg.src==='mlb' && game.homeId && game.awayId){
     try{
-      const d=await safeFetch(
-        `https://v1.baseball.api-sports.io/standings?league=23&season=2026`,
-        {'x-apisports-key':APISPORTS}
-      );
-      const teams={};
-      // response is array of groups, each group is array of teams
-      for(const group of d?.response||[]){
-        const list=Array.isArray(group)?group:[group];
-        for(const t of list){
-          const id=t.team?.id;
-          if(!id) continue;
-          const gp=t.games?.played||1;
-          const w=t.games?.win?.total||t.wins||0;
-          teams[id]={w, l:gp-w, pct:w/gp};
+      var st = await safeFetch('https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=2026&hydrate=team');
+      var teams = {};
+      for(var div of (st&&st.records||[])){
+        for(var t of (div&&div.teamRecords||[])){
+          var id = t.team&&t.team.id;
+          if(id) teams[id] = {w:t.wins||0, l:t.losses||0, pct:parseFloat(t.winningPercentage)||0.500};
         }
       }
-      const tH=teams[game.homeId], tA=teams[game.awayId];
+      var tH = teams[game.homeId], tA = teams[game.awayId];
       if(tH&&tA){
-        return mkResult(tH.pct,tA.pct,game.home,game.away,
-          `LMB: ${game.home} ${tH.w}-${tH.l} vs ${game.away} ${tA.w}-${tA.l}`,
-          'LMB Standings 2026',tH.w+'-'+tH.l,tA.w+'-'+tA.l);
+        game._mlbRecord = {home:tH.w+'-'+tH.l, away:tA.w+'-'+tA.l};
+        return mkResult(tH.pct, tA.pct, game.home, game.away,
+          'Récords: '+game.home+' '+tH.w+'-'+tH.l+' vs '+game.away+' '+tA.w+'-'+tA.l,
+          'MLB Standings 2026', tH.w+'-'+tH.l, tA.w+'-'+tA.l);
       }
-    }catch(e){console.warn('lmb standings',e);}
+    }catch(e){ console.warn('mlb standings',e); }
   }
 
-  // ─────────────────────────────────────────────────────
-  // ✅ NBA — api-sports basketball /standings
-  // Endpoint: /standings?league=12&season=2024-2025
-  // Response: response[]{team.id, win.total, games.played}
-  // ─────────────────────────────────────────────────────
-  if(game.sport==='basketball'&&game.homeId&&game.awayId){
+  // ── LMB ──
+  if(game.sport==='baseball' && game._lg.src==='baseball' && game.homeId && game.awayId){
     try{
-      const d=await safeFetch(
-        `https://v1.basketball.api-sports.io/standings?league=12&season=2025-2026`,
+      var d2 = await safeFetch(
+        'https://v1.baseball.api-sports.io/standings?league=23&season=2026',
         {'x-apisports-key':APISPORTS}
       );
-      const teams={};
-      // response can be array of groups or flat array
-      const flatten=(arr)=>{
-        const out=[];
-        for(const item of arr||[]){
-          if(Array.isArray(item)) out.push(...item);
-          else out.push(item);
+      var teams2 = {};
+      for(var group of (d2&&d2.response||[])){
+        var list = Array.isArray(group)?group:[group];
+        for(var t2 of list){
+          var id2 = t2.team&&t2.team.id;
+          if(!id2) continue;
+          var gp = t2.games&&t2.games.played||1;
+          var w2 = (t2.games&&t2.games.win&&t2.games.win.total)||0;
+          teams2[id2] = {w:w2, l:gp-w2, pct:w2/gp};
         }
-        return out;
-      };
-      for(const t of flatten(d?.response)){
-        const id=t.team?.id;
-        if(!id) continue;
-        const w=t.win?.total||t.games?.win?.total||0;
-        const gp=t.games?.played||(t.win?.total||0)+(t.loss?.total||0)||1;
-        teams[id]={w, l:gp-w, pct:w/gp};
       }
-      const tH=teams[game.homeId], tA=teams[game.awayId];
-      if(tH&&tA){
-        return mkResult(tH.pct,tA.pct,game.home,game.away,
-          `NBA Finals: ${game.home} ${tH.w}-${tH.l} vs ${game.away} ${tA.w}-${tA.l} (+ventaja local)`,
-          'NBA Standings 2024-25',tH.w+'-'+tH.l,tA.w+'-'+tA.l);
+      var tH2 = teams2[game.homeId], tA2 = teams2[game.awayId];
+      if(tH2&&tA2){
+        return mkResult(tH2.pct, tA2.pct, game.home, game.away,
+          'LMB: '+game.home+' '+tH2.w+'-'+tH2.l+' vs '+game.away+' '+tA2.w+'-'+tA2.l,
+          'LMB Standings', tH2.w+'-'+tH2.l, tA2.w+'-'+tA2.l);
       }
-    }catch(e){console.warn('nba standings',e);}
+    }catch(e){ console.warn('lmb standings',e); }
   }
 
-  // ─────────────────────────────────────────────────────
-  // ✅ NFL — api-sports american-football /standings
-  // Endpoint: /standings?league=1&season=2025
-  // Response: response[]{team.id, won, lost, ties}
-  // ─────────────────────────────────────────────────────
-  if(game.sport==='football'&&game.homeId&&game.awayId){
+  // ── NBA ──
+  if(game.sport==='basketball' && game.homeId && game.awayId){
     try{
-      const d=await safeFetch(
-        `https://v1.american-football.api-sports.io/standings?league=1&season=2025`,
+      var d3 = await safeFetch(
+        'https://v1.basketball.api-sports.io/standings?league=12&season=2025-2026',
         {'x-apisports-key':APISPORTS}
       );
-      const teams={};
-      const flatten=(arr)=>{const out=[];for(const i of arr||[]){if(Array.isArray(i))out.push(...i);else out.push(i);}return out;};
-      for(const t of flatten(d?.response)){
-        const id=t.team?.id;
-        if(!id) continue;
-        const w=t.won||t.wins||0, l=t.lost||t.losses||0, gp=(w+l)||1;
-        teams[id]={w, l, pct:w/gp};
+      var teams3 = {};
+      var flatten = function(arr){ var out=[]; for(var i of (arr||[])){if(Array.isArray(i))out.push(...i);else out.push(i);} return out; };
+      for(var t3 of flatten(d3&&d3.response)){
+        var id3 = t3.team&&t3.team.id;
+        if(!id3) continue;
+        var w3 = (t3.win&&t3.win.total)||(t3.games&&t3.games&&t3.games.win&&t3.games.win.total)||0;
+        var gp3 = (t3.games&&t3.games.played)||(w3+(t3.loss&&t3.loss.total||0))||1;
+        teams3[id3] = {w:w3, pct:w3/gp3};
       }
-      const tH=teams[game.homeId], tA=teams[game.awayId];
-      if(tH&&tA){
-        return mkResult(tH.pct,tA.pct,game.home,game.away,
-          `NFL: ${game.home} ${tH.w}-${tH.l} vs ${game.away} ${tA.w}-${tA.l}`,
-          'NFL Standings 2025',tH.w+'-'+tH.l,tA.w+'-'+tA.l);
+      var tH3 = teams3[game.homeId], tA3 = teams3[game.awayId];
+      if(tH3&&tA3){
+        return mkResult(tH3.pct, tA3.pct, game.home, game.away,
+          'NBA Win%: '+game.home+' '+(tH3.pct*100).toFixed(0)+'% vs '+game.away+' '+(tA3.pct*100).toFixed(0)+'%',
+          'NBA Standings', null, null);
       }
-    }catch(e){console.warn('nfl standings',e);}
+    }catch(e){ console.warn('nba standings',e); }
   }
 
-  // ─────────────────────────────────────────────────────
-  // ✅ FALLBACK — si no hay datos, usar 50/50 neutral
-  // pero con cuota 1.90 honesta
-  // ─────────────────────────────────────────────────────
+  // ── NFL ──
+  if(game.sport==='football' && game.homeId && game.awayId){
+    try{
+      var d4 = await safeFetch(
+        'https://v1.american-football.api-sports.io/standings?league=1&season=2025',
+        {'x-apisports-key':APISPORTS}
+      );
+      var teams4 = {};
+      var flatten4 = function(arr){ var out=[]; for(var i of (arr||[])){if(Array.isArray(i))out.push(...i);else out.push(i);} return out; };
+      for(var t4 of flatten4(d4&&d4.response)){
+        var id4 = t4.team&&t4.team.id;
+        if(!id4) continue;
+        var w4 = t4.won||t4.wins||0, l4 = t4.lost||t4.losses||0;
+        teams4[id4] = {w:w4, l:l4, pct:w4/((w4+l4)||1)};
+      }
+      var tH4 = teams4[game.homeId], tA4 = teams4[game.awayId];
+      if(tH4&&tA4){
+        return mkResult(tH4.pct, tA4.pct, game.home, game.away,
+          'NFL: '+game.home+' '+tH4.w+'-'+tH4.l+' vs '+game.away+' '+tA4.w+'-'+tA4.l,
+          'NFL Standings', tH4.w+'-'+tH4.l, tA4.w+'-'+tA4.l);
+      }
+    }catch(e){ console.warn('nfl standings',e); }
+  }
+
+  // ── FALLBACK ──
   return{
-    home_pct:50, draw_pct:0, away_pct:50,
+    home_pct:50, draw_pct:10, away_pct:40,
     winner:null,
     advice:'Sin datos de standings disponibles',
-    src:'Fallback 50/50',
-    derivedOdds:{home:1.90,away:1.90}
+    src:'Fallback',
+    derivedOdds:{home:1.90, away:2.10}
   };
 }
 
 
-// ══════════════════════════════════════════════════
-// ESPN ODDS (gratis, sin key, sin CORS)
-// Endpoint: site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates=YYYYMMDD
-// Incluye líneas de DraftKings/Caesars en competitions[].odds[]
-// ══════════════════════════════════════════════════
-const ESPN_SPORT_MAP={
-  // ══════════════════════════════════════════════════════════════
-  // Mapa de ligas → ESPN sport/league slugs
-  // Todos usan el mismo patrón:
-  //   Scoreboard: site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates=YYYYMMDD
-  //   Odds:       sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/events/{id}/competitions/{id}/odds
-  // ══════════════════════════════════════════════════════════════
-  mlb:  {sport:'baseball',    league:'mlb'},
-  nba:  {sport:'basketball',  league:'nba'},
-  nfl:  {sport:'football',    league:'nfl'},
-  wc:   {sport:'soccer',      league:'fifa.world'},
-  mx:   {sport:'soccer',      league:'mex.1'},
-  mls:  {sport:'soccer',      league:'usa.1'},
-  epl:  {sport:'soccer',      league:'eng.1'},
-  ucl:  {sport:'soccer',      league:'uefa.champions'},
-  la:   {sport:'soccer',      league:'esp.1'},
-  bl:   {sport:'soccer',      league:'ger.1'},
-  sa:   {sport:'soccer',      league:'ita.1'},
-  l1:   {sport:'soccer',      league:'fra.1'},
-  ami:  {sport:'soccer',      league:'fifa.friendly'},
-  unl:  {sport:'soccer',      league:'uefa.nations'},
-  lmb:  null, // No está en ESPN — usa api-sports
-};
-
-// ══════════════════════════════════════════════════════════════
-// CARGA DE ODDS ESPN — Para TODAS las ligas
-// Flujo: Scoreboard → IDs de eventos → Odds por evento (paralelo)
-// Fuente: DraftKings vía ESPN Core API (gratis, sin key, sin CORS)
-// ══════════════════════════════════════════════════════════════
 async function loadESPNOdds(games){
   const dateStr = selDate.replace(/-/g,''); // YYYYMMDD
 
