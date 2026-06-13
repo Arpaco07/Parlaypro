@@ -733,15 +733,18 @@ async function fetchPrediction(game){
         'Austria':21,'Ecuador':22,'Korea Republic':23,'Hungary':24,'Turkey':25,
         'Czechia':26,'Australia':27,'Ukraine':28,'Sweden':29,'Poland':30,
         'Serbia':31,'Chile':32,'Peru':33,'Norway':34,'Paraguay':35,
-        'Saudi Arabia':36,"Côte d'Ivoire":37,'Algeria':38,'Canada':39,
+        'Saudi Arabia':36,'CotedIvoire':37,'Algeria':38,'Canada':39,
         'Iran':40,'Egypt':41,'South Africa':42,'Nigeria':43,'Cameroon':44,
         'Ghana':45,'Tunisia':46,'DR Congo':47,'Haiti':48,'Bolivia':49,
         'New Zealand':50,'Bosnia and Herzegovina':51,'Iraq':52,'Qatar':53,
         'Panama':54,'Jamaica':55,'El Salvador':56,'Cape Verde':57,
         'Jordan':58,'Curaçao':59,'Uzbekistan':60
       };
-      var rH = FIFA_RANK[game.home]||50;
-      var rA = FIFA_RANK[game.away]||50;
+      // Normalize team names for lookup (handle special chars)
+      var normHome = game.home.replace(/[^a-zA-Z0-9 ]/g,'').trim();
+      var normAway = game.away.replace(/[^a-zA-Z0-9 ]/g,'').trim();
+      var rH = FIFA_RANK[game.home] || FIFA_RANK[normHome] || 50;
+      var rA = FIFA_RANK[game.away] || FIFA_RANK[normAway] || 50;
       var sH = 1/rH, sA = 1/rA, tot = sH+sA;
       var pH2 = sH/tot, pA2 = sA/tot;
       var hosts = ['United States','Mexico','Canada'];
