@@ -522,26 +522,43 @@ function toggleL(key,on){on?activeLgs.add(key):activeLgs.delete(key);document.qu
 // ═══════════════════════════════════
 // SAFE FETCH
 // ═══════════════════════════════════
-async function safeFetch(url,headers={}){
-  // Direct fetch — try first (works on Netlify server)
-  try{const r=await fetch(url,{headers,signal:AbortSignal.timeout(4000)});if(r.ok)return await r.json();}catch(e){}
-  // Proxy fallback — only if direct fails
-  try{const r=await fetch(`https://corsproxy.io/?${encodeURIComponent(url)}`,{signal:AbortSignal.timeout(4000)});if(r.ok){const t=await r.text();return JSON.parse(t);}}catch(e){}
-  return null; // Skip allorigins — too slow
+async function safeFetch(url,headers){
+  if(!headers) headers={};
+  try{
+    var r=await fetch(url,{headers:headers,signal:AbortSignal.timeout(5000)});
+    if(r.ok) return await r.json();
+  }catch(e){}
+  try{
+    var proxyUrl='https://corsproxy.io/?'+encodeURIComponent(url);
+    if(headers['x-apisports-key']){
+      var sep=url.indexOf('?')>=0?'&':'?';
+      proxyUrl='https://corsproxy.io/?'+encodeURIComponent(url+sep+'key='+headers['x-apisports-key']);
+    }
+    var r2=await fetch(proxyUrl,{signal:AbortSignal.timeout(6000)});
+    if(r2.ok){var t=await r2.text();if(t&&t.charAt(0)==='{')return JSON.parse(t);}
+  }catch(e){}
+  try{
+    var r3=await fetch('https://api.allorigins.win/raw?url='+encodeURIComponent(url),{signal:AbortSignal.timeout(6000)});
+    if(r3.ok){var t3=await r3.text();if(t3&&t3.charAt(0)==='{')return JSON.parse(t3);}
+  }catch(e){}
+  return null;
 }
-
-// ═══════════════════════════════════
-// FETCH GAMES
-// ═══════════════════════════════════
 async function fetchLeague(lg){
   if(lg.src==='football'){
     // Mundial 26: intentar ESPN primero (más confiable), luego api-sports
     if(lg.key==='wc'){
       const dateStr=selDate.replace(/-/g,'');
       // ESPN scoreboard para FIFA World Cup
-      const espn=await safeFetch(
-        `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${dateStr}&limit=20`
+      // Try multiple ESPN endpoints
+      var espn = await safeFetch(
+        'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates='+dateStr+'&limit=20'
       );
+      // Also try without dates filter
+      if(!espn||!espn.events||!espn.events.length){
+        espn = await safeFetch(
+          'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard'
+        );
+      }
       const espnGames=(espn?.events||[]).map(ev=>{
         const comp=ev.competitions?.[0];
         const home=comp?.competitors?.find(t=>t.homeAway==='home');
