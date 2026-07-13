@@ -199,6 +199,9 @@ tr:hover td{background:rgba(255,255,255,.012)}
   /* Historial: ocultar tabla, mostrar cards */
   .hist-wrap table{display:none}
   .hist-cards{display:flex !important;flex-direction:column;gap:10px;padding:12px}
+  /* Picks: ocultar tabla, mostrar cards */
+  .picks-wrap table{display:none}
+  .pick-cards{display:flex !important;flex-direction:column;gap:12px;padding:10px}
 }
 @media(max-width:480px){
   .ptable th:nth-child(5),.ptable td:nth-child(5){display:none}
@@ -209,6 +212,19 @@ tr:hover td{background:rgba(255,255,255,.012)}
 }
 /* Historia cards — siempre ocultas en desktop, visibles en móvil */
 .hist-cards{display:none}
+.pick-cards{display:none}
+.pick-card{background:var(--card);border:1px solid var(--b1);border-radius:11px;padding:12px}
+.pick-card-head{margin-bottom:8px}
+.pick-card-match{font-size:.82rem;font-weight:700;color:var(--txt)}
+.pick-card-sub{font-size:.6rem;color:var(--tx3);line-height:1.5}
+.pick-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px dashed var(--b1)}
+.pick-row-l{flex:1;min-width:0}
+.pick-row-name{font-size:.7rem;color:var(--cyan);font-weight:600}
+.pick-row-src{font-size:.55rem;color:var(--tx3)}
+.pick-row-r{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.pick-row-prob{font-family:'JetBrains Mono',monospace;font-size:.68rem;color:var(--gold);min-width:34px;text-align:right}
+.pick-add{padding:6px 10px;background:none;border:1px solid var(--green);color:var(--green);border-radius:6px;font-size:.62rem;cursor:pointer;white-space:nowrap}
+.pick-add.added{background:var(--green);color:#000}
 .hist-card{background:var(--bg3);border:1px solid var(--b1);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
 .hist-card-top{display:flex;justify-content:space-between;align-items:center}
 .hist-card-mid{font-size:.7rem;color:var(--tx2);line-height:1.5}
@@ -278,6 +294,8 @@ tr:hover td{background:rgba(255,255,255,.012)}
       <thead><tr><th>Liga</th><th>Partido</th><th>Pick</th><th>Prob.</th><th>Cuota</th><th>EV</th><th>Conf.</th><th>Agregar</th></tr></thead>
       <tbody id="picksBody"></tbody>
     </table>
+  <!-- Cards para móvil -->
+  <div class="pick-cards" id="pickCards"></div>
   </div>
 </div>
 
@@ -1228,6 +1246,23 @@ function generateAllPicks(game, prediction, odds){
       addPick('Ambos Anotan (Sí)', 0.55, 1.75, 'Est. BTTS');
       addPick('Ambos Anotan (No)', 0.45, 2.10, 'Est. BTTS');
     }
+
+    // ── TIROS DE ESQUINA — estadística histórica ──
+    // Promedio real: ~9.8 corners/partido. Over 8.5 pega ~62% históricamente
+    addPick('Over 8.5 Tiros Esquina', 0.62, 1.62, 'Est. Corners');
+    addPick('Under 8.5 Tiros Esquina', 0.38, 2.45, 'Est. Corners');
+
+    // ── TARJETAS AMARILLAS — estadística histórica ──
+    // Promedio real: ~4.3 amarillas/partido. Línea estándar 4.5
+    addPick('Over 4.5 Tarjetas', 0.48, 2.00, 'Est. Tarjetas');
+    addPick('Under 4.5 Tarjetas', 0.52, 1.80, 'Est. Tarjetas');
+  }
+
+  // ── HITS MLB — estadística histórica ──
+  // Promedio real MLB: ~16.8 hits combinados/partido. Línea estándar 16.5
+  if(game.sport==='baseball' && game._lg && game._lg.key==='mlb'){
+    addPick('Over 16.5 Hits', 0.52, 1.87, 'Est. Hits');
+    addPick('Under 16.5 Hits', 0.48, 1.95, 'Est. Hits');
   }
 
   // ── RUN LINE / SPREAD ──
@@ -1330,11 +1365,17 @@ function generateAllPicks(game, prediction, odds){
   if(game.sport==='soccer' && draw) result.push(draw);
   if(awayWin) result.push(awayWin);
 
-  // ── TOTALS: Over Y Under (ambas opciones) ──
-  const overPick  = totPicks.find(p=>p.pick.startsWith('Over'));
-  const underPick = totPicks.find(p=>p.pick.startsWith('Under'));
-  if(overPick)  result.push(overPick);
-  if(underPick) result.push(underPick);
+  // ── TOTALS: TODOS los Over/Under (goles/runs/pts + hits + corners + tarjetas) ──
+  // Orden: primero los de goles/runs/pts (Mkt/Est. Línea), luego hits, corners, tarjetas
+  const srcOrder = ['Mkt Totals','Est. Línea','Est. Hits','Est. Corners','Est. Tarjetas'];
+  totPicks.sort(function(a,b){
+    var ia = srcOrder.indexOf(a.src); if(ia<0) ia=99;
+    var ib = srcOrder.indexOf(b.src); if(ib<0) ib=99;
+    if(ia!==ib) return ia-ib;
+    // Over antes que Under dentro de cada grupo
+    return a.pick.startsWith('Over') ? -1 : 1;
+  });
+  totPicks.forEach(function(p){ result.push(p); });
 
   // ── ESPECIALES por deporte ──
   if(game.sport==='soccer'){
@@ -1574,9 +1615,12 @@ function renderPicksTable(){
       const evClass=pk.ev>0.05?'pill-ev-p':pk.ev>0?'pill-ev-u':'pill-ev-n';
       const cfClass='cf-'+(pk.conf==='alta'?'a':pk.conf==='media'?'m':'b');
       const icon=pk.pick.indexOf('Gana')>=0||pk.pick==='Empate'?'🏆':
+                 pk.src.indexOf('Corners')>=0?'🚩':
+                 pk.src.indexOf('Tarjetas')>=0?'🟨':
+                 pk.src.indexOf('Hits')>=0?'💥':
                  pk.pick.indexOf('Over')===0||pk.pick.indexOf('Under')===0?'📊':
                  pk.pick.indexOf('Ambos')===0?'⚽':
-                 pk.src==='Run Line'||pk.src==='Spread'?'📏':'🎯';
+                 pk.src.indexOf('Run Line')>=0||pk.src.indexOf('Spread')>=0?'📏':'🎯';
       const borderStyle=pi>0?'border-top:1px dashed var(--b1)':'';
       const barWidth=Math.min(pk.prob*100,100).toFixed(0);
       const evStr='EV'+(pk.ev>0?'+':'')+(pk.ev*100).toFixed(1)+'%';
@@ -1629,8 +1673,100 @@ function renderPicksTable(){
     });
   });
   tbody.innerHTML=html;
+  renderPickCards();
 }
 
+
+// ── Cards de picks para móvil — DOM methods, sin strings con comillas ──
+function renderPickCards(){
+  var el = document.getElementById('pickCards');
+  if(!el) return;
+  el.innerHTML = '';
+  if(!allPicks.length) return;
+
+  allPicks.forEach(function(p,i){
+    var g = p.game;
+    var allP = p.picks || [p.pick];
+
+    var card = document.createElement('div');
+    card.className = 'pick-card';
+
+    // Header: liga + partido + info
+    var head = document.createElement('div');
+    head.className = 'pick-card-head';
+
+    var badge = document.createElement('span');
+    badge.className = 'lbadge ' + g._lg.badge;
+    badge.textContent = g._lg.name;
+    head.appendChild(badge);
+
+    var match = document.createElement('div');
+    match.className = 'pick-card-match';
+    var score = (g.homeScore!=null) ? (' '+g.homeScore+'-'+g.awayScore+' ') : ' vs ';
+    match.textContent = g.home + score + g.away;
+    head.appendChild(match);
+
+    var sub = document.createElement('div');
+    sub.className = 'pick-card-sub';
+    var rec = g._mlbRecord || g._espnRecord;
+    var recTxt = '';
+    if(rec && typeof rec === 'object') recTxt = (rec.home||'')+' vs '+(rec.away||'')+' · ';
+    sub.textContent = recTxt + (g.timeStr||'') + (g.venue ? ' · '+g.venue : '');
+    head.appendChild(sub);
+
+    card.appendChild(head);
+
+    // Pick rows
+    allP.forEach(function(pk, pi){
+      var row = document.createElement('div');
+      row.className = 'pick-row';
+
+      var left = document.createElement('div');
+      left.className = 'pick-row-l';
+      var nm = document.createElement('div');
+      nm.className = 'pick-row-name';
+      var icon = pk.pick.indexOf('Gana')>=0||pk.pick==='Empate' ? '🏆' :
+                 pk.src.indexOf('Corners')>=0 ? '🚩' :
+                 pk.src.indexOf('Tarjetas')>=0 ? '🟨' :
+                 pk.src.indexOf('Hits')>=0 ? '💥' :
+                 pk.pick.indexOf('Ambos')===0 ? '⚽' :
+                 pk.src.indexOf('Run Line')>=0||pk.src.indexOf('Spread')>=0 ? '📏' : '📊';
+      nm.textContent = icon+' '+pk.pick;
+      left.appendChild(nm);
+      var sr = document.createElement('div');
+      sr.className = 'pick-row-src';
+      sr.textContent = pk.src + ' · @' + parseFloat(pk.odds||1.9).toFixed(2)
+        + ' · EV ' + (pk.ev>0?'+':'') + (pk.ev*100).toFixed(1) + '%';
+      left.appendChild(sr);
+      row.appendChild(left);
+
+      var right = document.createElement('div');
+      right.className = 'pick-row-r';
+      var pr = document.createElement('span');
+      pr.className = 'pick-row-prob';
+      pr.textContent = (pk.prob*100).toFixed(0)+'%';
+      right.appendChild(pr);
+
+      var btn = document.createElement('button');
+      btn.className = 'pick-add';
+      btn.id = 'pc_'+i+'_'+pi;
+      btn.textContent = '+';
+      btn.onclick = (function(gi,ppi,b){
+        return function(){
+          addPickSpecific(gi,ppi);
+          b.classList.add('added');
+          b.textContent = '✓';
+        };
+      })(i,pi,btn);
+      right.appendChild(btn);
+
+      row.appendChild(right);
+      card.appendChild(row);
+    });
+
+    el.appendChild(card);
+  });
+}
 
 function renderParlays(){
   document.getElementById('parlaysSection').style.display='block';
