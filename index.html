@@ -1099,7 +1099,7 @@ async function loadTheOddsAPI(games){
       var mk=marketsFor(sk);
       var url='https://api.the-odds-api.com/v4/sports/'+sk+'/odds'
         +'?apiKey='+ODDS_KEY
-        +'&regions=us,eu,uk'
+        +'&bookmakers=pinnacle,bet365'
         +'&markets='+mk
         +'&dateFormat=iso&oddsFormat=decimal';
       var r=await fetch(url,{signal:AbortSignal.timeout(8000)});
