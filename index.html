@@ -288,10 +288,12 @@ tr:hover td{background:rgba(255,255,255,.012)}
 
 <!-- PICKS TABLE -->
 <div id="picksSection" style="display:none">
-  <div class="sh"><span class="sn s2">2</span><h2>Picks del Día — Mejor Apuesta por Partido</h2><div class="ln"></div></div>
+  <div id="edgeBanner" style="display:none;background:var(--card);border:2px solid var(--b2);border-radius:12px;padding:14px 16px;margin-bottom:14px"></div>
+
+<div class="sh"><span class="sn s2">2</span><h2>Picks del Día — Mejor Apuesta por Partido</h2><div class="ln"></div></div>
   <div class="picks-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
     <table class="ptable" style="min-width:600px">
-      <thead><tr><th>Liga</th><th>Partido</th><th>Pick</th><th>Prob.</th><th>Cuota</th><th>EV</th><th>Conf.</th><th>Agregar</th></tr></thead>
+      <thead><tr><th>Liga</th><th>Partido</th><th>Pick</th><th>Pinnacle</th><th>Bet365</th><th>Edge</th><th>Veredicto</th><th>Agregar</th></tr></thead>
       <tbody id="picksBody"></tbody>
     </table>
   <!-- Cards para móvil -->
@@ -338,7 +340,7 @@ tr:hover td{background:rgba(255,255,255,.012)}
     <div class="pk"><div class="l">Legs</div><div class="v" id="psL" style="color:var(--cyan)">0</div></div>
     <div class="pk"><div class="l">Prob. Combinada</div><div class="v" id="psP">—</div></div>
     <div class="pk"><div class="l">Cuota Total</div><div class="v" id="psO" style="color:var(--gold)">—</div></div>
-    <div class="pk"><div class="l">+EV Parlay</div><div class="v" id="psE">—</div></div>
+    <div class="pk"><div class="l">Edge Prom</div><div class="v" id="psE">—</div></div>
   </div>
   <div class="kelly-bar" id="kellyBar">Agrega picks para ver el monto óptimo por Kelly Criterion.</div>
   <div class="bet-row">
@@ -364,6 +366,16 @@ tr:hover td{background:rgba(255,255,255,.012)}
   </div>
   <canvas id="bChart" height="175"></canvas>
 </div>
+
+<div style="max-width:1400px;margin:24px auto 40px;padding:16px 18px;background:var(--card);border:1px solid var(--b1);border-radius:11px">
+  <div style="font-family:'Barlow Condensed',sans-serif;font-size:.8rem;letter-spacing:2px;color:var(--tx2);font-weight:700;margin-bottom:8px">CÓMO FUNCIONA ESTE SISTEMA</div>
+  <div style="font-size:.72rem;color:var(--tx3);line-height:1.75">
+    <strong style="color:var(--tx2)">Pinnacle</strong> es la casa de apuestas más eficiente del mundo: opera con márgenes de 2-3% y ajusta sus líneas con dinero de apostadores profesionales. Su probabilidad implícita —una vez removido el margen (<em>devigging</em>)— es la mejor estimación pública disponible sobre lo que va a pasar en un partido.<br><br>
+    Este sistema compara lo que <strong style="color:var(--tx2)">Bet365</strong> te paga contra lo que Pinnacle dice que realmente vale. Cuando Bet365 paga más de lo que vale, hay <strong style="color:var(--green)">edge</strong>. Cuando paga menos, no hay que apostar.<br><br>
+    <strong style="color:var(--ora)">Lo que este sistema NO hace:</strong> no predice resultados ni garantiza ganancias. Su función es detectar cuándo <em>no</em> tienes ventaja — que es donde la mayoría de los apostadores pierde su dinero. Habrá días con cero picks recomendados. Eso es correcto, no un error.<br><br>
+    <span style="color:var(--red)">Apostar implica riesgo de pérdida. Nunca apuestes dinero que no puedas permitirte perder. Este sistema es una herramienta de análisis, no un consejo financiero.</span>
+  </div>
+</div>
 </main>
 <div class="toast" id="toast"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -372,7 +384,25 @@ tr:hover td{background:rgba(255,255,255,.012)}
 // KEYS & CONFIG
 // ═══════════════════════════════════
 const APISPORTS  = '2a76c132f01da724178b9df8954ef5e3';
-const ODDS_KEY   = 'a46fc31d97a82881e3113965946625b9';
+const ODDS_KEY   = '80ba5a6fb8f4efdcdbde9a5a3da1dcd1'; // Plan 20K — All bookmakers, All markets
+
+// ── CONFIGURACIÓN SHARP ──────────────────────────────────
+// Pinnacle = mercado eficiente (referencia). Bet365 = donde apuestas.
+const SHARP_BOOK = 'pinnacle';
+const MY_BOOK    = 'bet365';
+const EDGE_MIN   = 0.03; // 3% mínimo de ventaja sobre Pinnacle para mostrar el pick
+
+// Mercados por deporte — cuotas REALES (ya no estimaciones)
+const MARKETS_BY_SPORT = {
+  baseball_mlb:       'h2h,totals,spreads',
+  basketball_nba:     'h2h,totals,spreads',
+  americanfootball_nfl:'h2h,totals,spreads',
+  _soccer:            'h2h,totals,btts'
+};
+function marketsFor(sportKey){
+  if(sportKey.indexOf('soccer')===0) return MARKETS_BY_SPORT._soccer;
+  return MARKETS_BY_SPORT[sportKey] || 'h2h,totals';
+}
 const BET_MIN = 100, BET_MAX = 1000;
 
 // ── SUPABASE ──────────────────────────────────────────────
@@ -1049,79 +1079,167 @@ async function loadESPNOdds(games){
 
 // The Odds API como respaldo
 async function loadTheOddsAPI(games){
-  const sportKeys=[...new Set(games.map(g=>ODDS_SPORT_MAP[g._lg.key]).filter(Boolean))];
-  const cache={};
-  await Promise.allSettled(sportKeys.map(async sk=>{
-    try{
-      // American format para comparar con casas como Play Doit
-      const url=`https://api.the-odds-api.com/v4/sports/${sk}/odds?apiKey=${ODDS_KEY}&regions=us,eu&markets=h2h,totals,btts,spreads&dateFormat=iso&oddsFormat=american`;
-      const r=await fetch(url,{signal:AbortSignal.timeout(5000)});
-      if(r.ok){const d=await r.json();if(Array.isArray(d)&&d.length)cache[sk]=d;}
-    }catch(e){console.warn('[OddsAPI]',sk,e.message);}
-  }));
-  games.forEach(g=>{
-    const sk=ODDS_SPORT_MAP[g._lg.key];
-    if(!sk||!cache[sk])return;
-    const match=matchOdds(g,cache[sk]);
-    if(!match)return;
-    // Extraer mejores odds americanas de todas las casas
-    let bH=null,bD=null,bA=null,bOv=null,bUn=null,tLine=null,books=[];
-    (match.bookmakers||[]).forEach(b=>{
-      books.push(b.title);
-      b.markets?.forEach(m=>{
-        if(m.key==='h2h') m.outcomes?.forEach(o=>{
-          const p=o.price;
-          if(o.name===match.home_team){if(bH===null||p>bH)bH=p;}
-          else if(o.name==='Draw'){if(bD===null||p>bD)bD=p;}
-          else{if(bA===null||p>bA)bA=p;}
-        });
-        if(m.key==='totals') m.outcomes?.forEach(o=>{
-          if(o.name==='Over'&&(bOv===null||o.price>bOv)){bOv=o.price;if(o.point)tLine=o.point;}
-          if(o.name==='Under'&&(bUn===null||o.price>bUn))bUn=o.price;
-        });
-      });
-    });
-    // BTTS (both teams to score) — soccer only
-    let bBTTSy=null, bBTTSn=null;
-    // Run Line / Spread
-    let bSpH=null, bSpA=null, spLine=null;
-
-    (match.bookmakers||[]).forEach(b=>{
-      b.markets?.forEach(m=>{
-        if(m.key==='btts') m.outcomes?.forEach(o=>{
-          if(o.name==='Yes'&&(bBTTSy===null||o.price>bBTTSy)) bBTTSy=o.price;
-          if(o.name==='No' &&(bBTTSn===null||o.price>bBTTSn)) bBTTSn=o.price;
-        });
-        if(m.key==='spreads') m.outcomes?.forEach(o=>{
-          if(o.name===match.home_team&&(bSpH===null||o.price>bSpH)){bSpH=o.price;if(o.point)spLine=o.point;}
-          if(o.name===match.away_team&&(bSpA===null||o.price>bSpA)) bSpA=o.price;
-        });
-      });
-    });
-
-    if(bH!==null||bA!==null){
-      g._odds={
-        home:bH!==null?americanToDecimal(bH).toFixed(2):null,
-        draw:bD!==null?americanToDecimal(bD).toFixed(2):null,
-        away:bA!==null?americanToDecimal(bA).toFixed(2):null,
-        over:bOv!==null?americanToDecimal(bOv).toFixed(2):null,
-        under:bUn!==null?americanToDecimal(bUn).toFixed(2):null,
-        bttsYes:bBTTSy!==null?americanToDecimal(bBTTSy).toFixed(2):null,
-        bttsNo: bBTTSn!==null?americanToDecimal(bBTTSn).toFixed(2):null,
-        spreadHome:bSpH!==null?americanToDecimal(bSpH).toFixed(2):null,
-        spreadAway:bSpA!==null?americanToDecimal(bSpA).toFixed(2):null,
-        spreadLine:spLine,
-        homeAmer:bH, awayAmer:bA, drawAmer:bD,
-        books:books.slice(0,3), src:'The Odds API'
-      };
-      if(tLine) g._totalsLine=tLine;
-    }
+  // ══════════════════════════════════════════════════════════
+  // MOTOR SHARP — Pinnacle como referencia, Bet365 como tu casa
+  //
+  // Por cada partido guardamos:
+  //   _sharp = probabilidades DEVIGGED de Pinnacle (la "verdad" del mercado)
+  //   _book  = cuotas de Bet365 (lo que realmente te pagan)
+  //   _best  = mejor cuota disponible (informativo)
+  // ══════════════════════════════════════════════════════════
+  var sportKeys=[];
+  games.forEach(function(g){
+    var sk=ODDS_SPORT_MAP[g._lg.key];
+    if(sk && sportKeys.indexOf(sk)<0) sportKeys.push(sk);
   });
-}
 
-async function fetchOddsForSport(sportKey){
-  // Kept for compatibility — now using loadTheOddsAPI
-  return[];
+  var cache={};
+  await Promise.allSettled(sportKeys.map(async function(sk){
+    try{
+      var mk=marketsFor(sk);
+      var url='https://api.the-odds-api.com/v4/sports/'+sk+'/odds'
+        +'?apiKey='+ODDS_KEY
+        +'&regions=us,eu,uk'
+        +'&markets='+mk
+        +'&dateFormat=iso&oddsFormat=decimal';
+      var r=await fetch(url,{signal:AbortSignal.timeout(8000)});
+      if(r.ok){
+        var d=await r.json();
+        if(Array.isArray(d)&&d.length){
+          cache[sk]=d;
+          console.log('[Odds] '+sk+': '+d.length+' partidos, mercados: '+mk);
+        }
+      } else {
+        console.warn('[Odds] '+sk+' HTTP '+r.status);
+      }
+    }catch(e){ console.warn('[Odds] '+sk, e.message); }
+  }));
+
+  games.forEach(function(g){
+    var sk=ODDS_SPORT_MAP[g._lg.key];
+    if(!sk||!cache[sk]) return;
+    var m=matchOdds(g,cache[sk]);
+    if(!m) return;
+
+    var books=m.bookmakers||[];
+    var sharpBk = books.find(function(b){ return b.key===SHARP_BOOK; });
+    var myBk    = books.find(function(b){ return b.key===MY_BOOK; });
+
+    // ── Extraer un mercado de un bookmaker ──
+    function grab(bk, mkKey){
+      if(!bk) return null;
+      var mkt=(bk.markets||[]).find(function(x){ return x.key===mkKey; });
+      if(!mkt) return null;
+      return mkt;
+    }
+
+    // ── DEVIGGING: quitar el margen de Pinnacle ──
+    // Suma las probabilidades implícitas y normaliza a 100%
+    function devig(outcomes){
+      if(!outcomes||!outcomes.length) return null;
+      var raw=outcomes.map(function(o){ return 1/parseFloat(o.price); });
+      var total=raw.reduce(function(a,b){return a+b;},0);
+      if(!total) return null;
+      var out={};
+      outcomes.forEach(function(o,i){
+        out[o.name]={ prob: raw[i]/total, price: parseFloat(o.price), point: o.point };
+      });
+      out._vig = total - 1; // margen de la casa
+      return out;
+    }
+
+    var odds={ src:'The Odds API', books:books.map(function(b){return b.title;}).slice(0,6) };
+
+    // ── H2H ──
+    var sH2H = grab(sharpBk,'h2h');
+    var mH2H = grab(myBk,'h2h');
+    if(sH2H) odds.sharpH2H = devig(sH2H.outcomes);
+    if(mH2H){
+      mH2H.outcomes.forEach(function(o){
+        if(o.name===m.home_team) odds.home=parseFloat(o.price).toFixed(2);
+        else if(o.name==='Draw') odds.draw=parseFloat(o.price).toFixed(2);
+        else odds.away=parseFloat(o.price).toFixed(2);
+      });
+    }
+    // Si Bet365 no tiene el partido, usar la mejor cuota disponible
+    if(!odds.home && !odds.away){
+      var bH=null,bD=null,bA=null;
+      books.forEach(function(b){
+        var mk=(b.markets||[]).find(function(x){return x.key==='h2h';});
+        if(!mk) return;
+        mk.outcomes.forEach(function(o){
+          var p=parseFloat(o.price);
+          if(o.name===m.home_team){ if(bH===null||p>bH) bH=p; }
+          else if(o.name==='Draw'){ if(bD===null||p>bD) bD=p; }
+          else { if(bA===null||p>bA) bA=p; }
+        });
+      });
+      if(bH) odds.home=bH.toFixed(2);
+      if(bD) odds.draw=bD.toFixed(2);
+      if(bA) odds.away=bA.toFixed(2);
+      odds.noBet365=true;
+    }
+
+    // ── TOTALS ──
+    var sTot = grab(sharpBk,'totals');
+    var mTot = grab(myBk,'totals') || (function(){
+      for(var i=0;i<books.length;i++){
+        var mk=grab(books[i],'totals');
+        if(mk) return mk;
+      }
+      return null;
+    })();
+    if(sTot) odds.sharpTotals = devig(sTot.outcomes);
+    if(mTot){
+      mTot.outcomes.forEach(function(o){
+        if(o.name==='Over'){  odds.over=parseFloat(o.price).toFixed(2);  if(o.point) odds.totalsLine=o.point; }
+        if(o.name==='Under'){ odds.under=parseFloat(o.price).toFixed(2); if(o.point) odds.totalsLine=o.point; }
+      });
+    }
+
+    // ── SPREADS / RUN LINE ──
+    var sSp = grab(sharpBk,'spreads');
+    var mSp = grab(myBk,'spreads') || (function(){
+      for(var i=0;i<books.length;i++){
+        var mk=grab(books[i],'spreads');
+        if(mk) return mk;
+      }
+      return null;
+    })();
+    if(sSp) odds.sharpSpreads = devig(sSp.outcomes);
+    if(mSp){
+      mSp.outcomes.forEach(function(o){
+        if(o.name===m.home_team){ odds.spreadHome=parseFloat(o.price).toFixed(2); odds.spreadLine=o.point; }
+        else { odds.spreadAway=parseFloat(o.price).toFixed(2); }
+      });
+    }
+
+    // ── BTTS (soccer) ──
+    var sBtts = grab(sharpBk,'btts');
+    var mBtts = grab(myBk,'btts') || (function(){
+      for(var i=0;i<books.length;i++){
+        var mk=grab(books[i],'btts');
+        if(mk) return mk;
+      }
+      return null;
+    })();
+    if(sBtts) odds.sharpBtts = devig(sBtts.outcomes);
+    if(mBtts){
+      mBtts.outcomes.forEach(function(o){
+        if(o.name==='Yes') odds.bttsYes=parseFloat(o.price).toFixed(2);
+        if(o.name==='No')  odds.bttsNo =parseFloat(o.price).toFixed(2);
+      });
+    }
+
+    odds.hasSharp = !!(sharpBk);
+    odds.hasBet365 = !!(myBk);
+    g._odds=odds;
+    if(odds.totalsLine) g._totalsLine=odds.totalsLine;
+  });
+
+  var withSharp = games.filter(function(g){ return g._odds && g._odds.hasSharp; }).length;
+  var with365   = games.filter(function(g){ return g._odds && g._odds.hasBet365; }).length;
+  console.log('[Odds] Pinnacle: '+withSharp+'/'+games.length+' · Bet365: '+with365+'/'+games.length);
 }
 
 function matchOdds(game,oddsData){
@@ -1181,236 +1299,118 @@ function confidence(prob,ev){
 // Retorna array de picks ordenados por EV desc
 // ══════════════════════════════════════════════════════════
 function generateAllPicks(game, prediction, odds){
-  const picks = [];
+  // ══════════════════════════════════════════════════════════
+  // MOTOR DE PICKS — MODELO SHARP
+  //
+  // Para cada pick calculamos 3 números:
+  //   1. modelProb  → lo que dice NUESTRO modelo (standings/FIFA)
+  //   2. sharpProb  → lo que dice PINNACLE sin margen (la verdad del mercado)
+  //   3. bookOdds   → lo que te paga BET365 (donde apuestas)
+  //
+  // EDGE = sharpProb − probImplícitaDeTuCuota
+  //   Positivo = Bet365 te paga MÁS de lo que vale → VALOR
+  //   Negativo = Bet365 te paga MENOS de lo que vale → NO APOSTAR
+  //
+  // Nota: usamos sharpProb como probabilidad "real" porque Pinnacle
+  // es más confiable que nuestro modelo de standings.
+  // ══════════════════════════════════════════════════════════
+  var picks = [];
 
-  // ── HELPER: calcular prob ajustada y EV ──
-  function addPick(label, prob, oddsD, src){
-    if(!prob||!oddsD||prob<0.20) return;
-    const ev = calcEV(prob, parseFloat(oddsD));
+  function addPick(label, modelProb, sharpProb, bookOdds, src){
+    if(!bookOdds) return;
+    var o = parseFloat(bookOdds);
+    if(!o || o < 1.01) return;
+
+    var impliedProb = 1/o;                       // lo que implica tu cuota
+    var trueProb    = sharpProb || modelProb;    // Pinnacle manda; si no hay, el modelo
+    if(!trueProb) return;
+
+    var edge = trueProb - impliedProb;           // EDGE real vs mercado sharp
+    var ev   = trueProb * o - 1;                 // EV clásico usando prob real
+
     picks.push({
-      pick: label,
-      prob: parseFloat(prob.toFixed(4)),
-      odds: parseFloat(parseFloat(oddsD).toFixed(2)),
-      ev:   parseFloat(ev.toFixed(4)),
-      src,
-      conf: confidence(prob, ev)
+      pick:      label,
+      prob:      parseFloat(trueProb.toFixed(4)),      // prob que mostramos
+      modelProb: modelProb ? parseFloat(modelProb.toFixed(4)) : null,
+      sharpProb: sharpProb ? parseFloat(sharpProb.toFixed(4)) : null,
+      odds:      parseFloat(o.toFixed(2)),
+      impliedProb: parseFloat(impliedProb.toFixed(4)),
+      edge:      parseFloat(edge.toFixed(4)),
+      ev:        parseFloat(ev.toFixed(4)),
+      src:       src,
+      hasSharp:  !!sharpProb,
+      conf:      confidence(trueProb, ev)
     });
   }
 
-  // ── MERCADO H2H (Ganador/Empate) ──
-  if(odds && (odds.home || odds.away)){
-    const probs = adjustedProbs(
-      odds.home ? parseFloat(odds.home) : null,
-      odds.draw ? parseFloat(odds.draw) : null,
-      odds.away ? parseFloat(odds.away) : null
-    );
-    const [pH, pD, pA] = probs;
+  var sH = odds && odds.sharpH2H;
+  var sT = odds && odds.sharpTotals;
+  var sS = odds && odds.sharpSpreads;
+  var sB = odds && odds.sharpBtts;
 
-    // Siempre agregar ambos equipos sin importar probabilidad
-    // El usuario debe poder elegir cualquier equipo para su parlay
-    if(odds.home) addPick(game.home+' Gana', pH, odds.home, 'Mkt H2H');
-    if(odds.draw && game.sport==='soccer') addPick('Empate', pD, odds.draw, 'Mkt H2H');
-    if(odds.away) addPick(game.away+' Gana', pA, odds.away, 'Mkt H2H');
+  // ── H2H — Ganador / Empate ──
+  var mH = prediction && prediction.home_pct ? prediction.home_pct/100 : null;
+  var mA = prediction && prediction.away_pct ? prediction.away_pct/100 : null;
+  var mD = prediction && prediction.draw_pct ? prediction.draw_pct/100 : null;
+
+  if(odds && odds.home){
+    var spH = sH && sH[game.home] ? sH[game.home].prob : null;
+    addPick(game.home+' Gana', mH, spH, odds.home, 'H2H');
+  }
+  if(odds && odds.draw && game.sport==='soccer'){
+    var spD = sH && sH['Draw'] ? sH['Draw'].prob : null;
+    addPick('Empate', mD, spD, odds.draw, 'H2H');
+  }
+  if(odds && odds.away){
+    var spA = sH && sH[game.away] ? sH[game.away].prob : null;
+    addPick(game.away+' Gana', mA, spA, odds.away, 'H2H');
   }
 
-  // ── TOTALS (Over/Under) ──
-  const line = (odds && odds._totalsLine) || game._totalsLine || defaultLine(game.sport);
-  const label = game.sport==='baseball'?'Runs':game.sport==='basketball'?'Pts':'Goles';
-
+  // ── TOTALS — Over/Under ──
   if(odds && odds.over && odds.under){
-    // Con cuotas reales de mercado
-    const pOver = 1/parseFloat(odds.over);
-    const pUnder= 1/parseFloat(odds.under);
-    addPick('Over '+line+' '+label,  pOver,  odds.over,  'Mkt Totals');
-    addPick('Under '+line+' '+label, pUnder, odds.under, 'Mkt Totals');
-  } else {
-    // Sin cuotas de mercado — usar probabilidad 50/50 con cuota estándar
-    // Over/Under suele estar cerca de 50% en béisbol y basketball
-    // Soccer Over 2.5: ~52% probabilidad histórica, Under 2.5: ~48%
-    if(game.sport==='soccer'){
-      addPick('Over 2.5 '+label,  0.52, 1.85, 'Est. Línea');
-      addPick('Under 2.5 '+label, 0.48, 2.05, 'Est. Línea');
-    } else {
-      addPick('Over '+line+' '+label,  0.50, 1.91, 'Est. Línea');
-      addPick('Under '+line+' '+label, 0.50, 1.91, 'Est. Línea');
+    var line = odds.totalsLine || game._totalsLine || defaultLine(game.sport);
+    var lbl  = game.sport==='baseball'?'Carreras':game.sport==='basketball'?'Puntos':game.sport==='football'?'Puntos':'Goles';
+    var spOv = sT && sT['Over']  ? sT['Over'].prob  : null;
+    var spUn = sT && sT['Under'] ? sT['Under'].prob : null;
+    addPick('Over '+line+' '+lbl,  null, spOv, odds.over,  'Totales');
+    addPick('Under '+line+' '+lbl, null, spUn, odds.under, 'Totales');
+  }
+
+  // ── SPREADS / RUN LINE ──
+  if(odds && odds.spreadHome && odds.spreadLine != null){
+    var sl  = odds.spreadLine;
+    var slb = game.sport==='baseball'?'Run Line':'Spread';
+    var spSH = sS && sS[game.home] ? sS[game.home].prob : null;
+    var spSA = sS && sS[game.away] ? sS[game.away].prob : null;
+    addPick(game.home+' '+slb+' '+(sl>0?'+':'')+sl, null, spSH, odds.spreadHome, slb);
+    if(odds.spreadAway){
+      addPick(game.away+' '+slb+' '+(sl>0?'-':'+')+Math.abs(sl), null, spSA, odds.spreadAway, slb);
     }
   }
 
-  // ── BTTS — Solo soccer ──
-  if(game.sport==='soccer'){
-    if(odds && odds.bttsYes && odds.bttsNo){
-      addPick('Ambos Anotan (Sí)', 1/parseFloat(odds.bttsYes), odds.bttsYes, 'BTTS');
-      addPick('Ambos Anotan (No)', 1/parseFloat(odds.bttsNo),  odds.bttsNo,  'BTTS');
-    } else {
-      // Estimación estándar: ~55% de partidos tienen ambos equipos anotando
-      addPick('Ambos Anotan (Sí)', 0.55, 1.75, 'Est. BTTS');
-      addPick('Ambos Anotan (No)', 0.45, 2.10, 'Est. BTTS');
-    }
-
-    // ── TIROS DE ESQUINA — estadística histórica ──
-    // Promedio real: ~9.8 corners/partido. Over 8.5 pega ~62% históricamente
-    addPick('Over 8.5 Tiros Esquina', 0.62, 1.62, 'Est. Corners');
-    addPick('Under 8.5 Tiros Esquina', 0.38, 2.45, 'Est. Corners');
-
-    // ── TARJETAS AMARILLAS — estadística histórica ──
-    // Promedio real: ~4.3 amarillas/partido. Línea estándar 4.5
-    addPick('Over 4.5 Tarjetas', 0.48, 2.00, 'Est. Tarjetas');
-    addPick('Under 4.5 Tarjetas', 0.52, 1.80, 'Est. Tarjetas');
+  // ── BTTS — soccer ──
+  if(game.sport==='soccer' && odds && odds.bttsYes && odds.bttsNo){
+    var spBY = sB && sB['Yes'] ? sB['Yes'].prob : null;
+    var spBN = sB && sB['No']  ? sB['No'].prob  : null;
+    addPick('Ambos Anotan (Sí)', null, spBY, odds.bttsYes, 'BTTS');
+    addPick('Ambos Anotan (No)', null, spBN, odds.bttsNo,  'BTTS');
   }
 
-  // ── HITS MLB — estadística histórica ──
-  // Promedio real MLB: ~16.8 hits combinados/partido. Línea estándar 16.5
-  if(game.sport==='baseball' && game._lg && game._lg.key==='mlb'){
-    addPick('Over 16.5 Hits', 0.52, 1.87, 'Est. Hits');
-    addPick('Under 16.5 Hits', 0.48, 1.95, 'Est. Hits');
+  // ── SIN CUOTAS DE MERCADO: usar solo el modelo (marcado como tal) ──
+  if(!picks.length && prediction && prediction.derivedOdds){
+    var dO = prediction.derivedOdds;
+    if(dO.home && mH) addPick(game.home+' Gana', mH, null, dO.home, prediction.src||'Modelo');
+    if(dO.away && mA) addPick(game.away+' Gana', mA, null, dO.away, prediction.src||'Modelo');
   }
 
-  // ── RUN LINE / SPREAD ──
-  if(game.sport==='baseball'||game.sport==='football'||game.sport==='basketball'){
-    if(odds && odds.spreadHome && odds.spreadLine){
-      const spLine = odds.spreadLine;
-      const pSH = 1/parseFloat(odds.spreadHome);
-      const pSA = odds.spreadAway ? 1/parseFloat(odds.spreadAway) : null;
-      const lbl = game.sport==='baseball'?'Run Line':'Spread';
-      addPick(game.home+' '+lbl+' '+(spLine>0?'+':'')+spLine, pSH, odds.spreadHome, lbl);
-      if(pSA&&odds.spreadAway) addPick(game.away+' '+lbl+' '+(spLine>0?'-':'+')+(Math.abs(spLine)), pSA, odds.spreadAway, lbl);
-    } else if(prediction && prediction.home_pct){
-      // Sin spread de mercado: usar -1.5/+1.5 con probabilidad ajustada
-      const lbl = game.sport==='baseball'?'Run Line':'Spread';
-      const favProb = Math.max(prediction.home_pct, prediction.away_pct)/100;
-      const isFavHome = prediction.home_pct >= prediction.away_pct;
-      if(favProb > 0.55){
-        // El favorito a -1.5 tiene menor probabilidad que su ML
-        const favMinusProb = Math.max(0.35, favProb - 0.18);
-        const underdogPlusProb = 1 - favMinusProb;
-        const favOdds = parseFloat((1/favMinusProb * 1.05).toFixed(2));
-        const dogOdds = parseFloat((1/underdogPlusProb * 1.05).toFixed(2));
-        if(isFavHome){
-          addPick(game.home+' '+lbl+' -1.5', favMinusProb, favOdds, 'Est. '+lbl);
-          addPick(game.away+' '+lbl+' +1.5', underdogPlusProb, dogOdds, 'Est. '+lbl);
-        } else {
-          addPick(game.away+' '+lbl+' -1.5', favMinusProb, favOdds, 'Est. '+lbl);
-          addPick(game.home+' '+lbl+' +1.5', underdogPlusProb, dogOdds, 'Est. '+lbl);
-        }
-      }
-    }
+  // ── ORDENAR: mayor EDGE primero (los con valor arriba) ──
+  picks.sort(function(a,b){ return b.edge - a.edge; });
+
+  if(!picks.length){
+    picks.push({pick:'Sin cuotas disponibles', prob:0.5, odds:1.90, ev:-0.05, edge:-0.05,
+                src:'N/D', conf:'baja', hasSharp:false, sharpProb:null, modelProb:null, impliedProb:0.53});
   }
-
-  // ── PREDICCIÓN API-SPORTS ──
-  if(prediction && prediction.home_pct != null && !isNaN(prediction.home_pct)){
-    const pH = prediction.home_pct/100;
-    const pD = (prediction.draw_pct||0)/100;
-    const pA = prediction.away_pct/100;
-    if(prediction.advice) game._advice = prediction.advice;
-    if(game._espnRecord) game._mlbRecord = game._espnRecord;
-    const dO = prediction.derivedOdds;
-
-    if(odds && (odds.home||odds.away)){
-      // Con cuotas reales: blend si predicción difiere ≥8%
-      const mP = adjustedProbs(
-        odds.home?parseFloat(odds.home):null,
-        odds.draw?parseFloat(odds.draw):null,
-        odds.away?parseFloat(odds.away):null
-      );
-      if(pH - mP[0] > 0.08 && odds.home) addPick(game.home+' Gana', pH*0.55+mP[0]*0.45, odds.home, 'Pred+Mkt');
-      if(pA - mP[2] > 0.08 && odds.away) addPick(game.away+' Gana', pA*0.55+mP[2]*0.45, odds.away, 'Pred+Mkt');
-    } else if(dO){
-      // Sin cuotas de mercado → generar TODOS los picks con derived odds
-      if(dO.home) addPick(game.home+' Gana', pH, dO.home, prediction.src||'Standings');
-      if(dO.away) addPick(game.away+' Gana', pA, dO.away, prediction.src||'Standings');
-      if(game.sport==='soccer'&&pD>0.15&&dO.draw) addPick('Empate', pD, dO.draw, prediction.src||'Standings');
-      // Over/Under estimado
-      var line2=defaultLine(game.sport);
-      var lbl2=game.sport==='baseball'?'Runs':game.sport==='basketball'?'Pts':game.sport==='football'?'Pts':'Goles';
-      addPick('Over '+line2+' '+lbl2, 0.50, 1.91, 'Est.');
-      addPick('Under '+line2+' '+lbl2, 0.50, 1.91, 'Est.');
-      if(game.sport==='soccer'){
-        addPick('Ambos Anotan (Sí)', 0.50, 1.85, 'Est.');
-        addPick('Ambos Anotan (No)', 0.50, 1.95, 'Est.');
-      }
-      if(game.sport==='baseball'&&dO.home>1.3){
-        addPick(game.home+' Run Line -1.5', pH*0.65, parseFloat((dO.home*0.55).toFixed(2)), 'Est. RL');
-        addPick(game.away+' Run Line +1.5', pA*1.20, parseFloat((dO.away*0.55).toFixed(2)), 'Est. RL');
-      }
-    }
-  }
-
-  // ── DEDUPLICAR — quedarse con la versión de mejor EV por pick label ──
-  const seen = {};
-  const deduped = [];
-  for(const p of picks){
-    const key = p.pick.replace(/\s+/g,' ').trim();
-    if(!seen[key] || p.ev > seen[key].ev){
-      seen[key] = p;
-    }
-  }
-  Object.values(seen).forEach(p=>deduped.push(p));
-
-  // ── MOSTRAR TODOS LOS PICKS — usuario elige el que quiere ──
-  // Separar por categoría
-  const mlPicks   = deduped.filter(p=>p.pick.includes('Gana')||p.pick==='Empate');
-  const totPicks  = deduped.filter(p=>p.pick.startsWith('Over')||p.pick.startsWith('Under'));
-  const bttsPicks = deduped.filter(p=>p.pick.startsWith('Ambos'));
-  const spPicks   = deduped.filter(p=>p.src.includes('Run Line')||p.src.includes('Spread'));
-
-  const result = [];
-
-  // ── GANADORES: siempre mostrar AMBOS equipos + empate ──
-  // Ordenar: favorito primero, luego underdog
-  const homeWin = mlPicks.find(p=>p.pick===game.home+' Gana');
-  const awayWin = mlPicks.find(p=>p.pick===game.away+' Gana');
-  const draw    = mlPicks.find(p=>p.pick==='Empate');
-
-  if(homeWin) result.push(homeWin);
-  if(game.sport==='soccer' && draw) result.push(draw);
-  if(awayWin) result.push(awayWin);
-
-  // ── TOTALS: TODOS los Over/Under (goles/runs/pts + hits + corners + tarjetas) ──
-  // Orden: primero los de goles/runs/pts (Mkt/Est. Línea), luego hits, corners, tarjetas
-  const srcOrder = ['Mkt Totals','Est. Línea','Est. Hits','Est. Corners','Est. Tarjetas'];
-  totPicks.sort(function(a,b){
-    var ia = srcOrder.indexOf(a.src); if(ia<0) ia=99;
-    var ib = srcOrder.indexOf(b.src); if(ib<0) ib=99;
-    if(ia!==ib) return ia-ib;
-    // Over antes que Under dentro de cada grupo
-    return a.pick.startsWith('Over') ? -1 : 1;
-  });
-  totPicks.forEach(function(p){ result.push(p); });
-
-  // ── ESPECIALES por deporte ──
-  if(game.sport==='soccer'){
-    // BTTS Sí y No
-    bttsPicks.forEach(p=>result.push(p));
-  }
-  if(game.sport==='baseball'||game.sport==='football'){
-    // Run Line / Spread ambas direcciones
-    spPicks.forEach(p=>result.push(p));
-  }
-
-  // ── ASEGURAR que ambos equipos siempre aparezcan ──
-  // Si no hay cuotas de mercado, generar con derived odds
-  if(!result.find(p=>p.pick===game.home+' Gana')){
-    const dO=prediction?.derivedOdds;
-    if(dO?.home){
-      const ph=(prediction?.home_pct||50)/100;
-      result.unshift({pick:game.home+' Gana',prob:ph,odds:dO.home,ev:calcEV(ph,dO.home),src:prediction?.src||'Standings',conf:confidence(ph,calcEV(ph,dO.home))});
-    }
-  }
-  if(!result.find(p=>p.pick===game.away+' Gana')){
-    const dO=prediction?.derivedOdds;
-    if(dO?.away){
-      const pa=(prediction?.away_pct||50)/100;
-      result.push({pick:game.away+' Gana',prob:pa,odds:dO.away,ev:calcEV(pa,dO.away),src:prediction?.src||'Standings',conf:confidence(pa,calcEV(pa,dO.away))});
-    }
-  }
-
-  // ── FALLBACK si nada ──
-  if(!result.length){
-    result.push({pick:game.home+' Gana',prob:0.50,odds:1.90,ev:-0.05,src:'Sin datos',conf:'baja'});
-    result.push({pick:game.away+' Gana',prob:0.50,odds:1.90,ev:-0.05,src:'Sin datos',conf:'baja'});
-  }
-
-  return result; // Todos los picks disponibles sin límite
+  return picks;
 }
 
 // Compatibilidad: generatePick retorna el primer pick (mejor ganador)
@@ -1433,242 +1433,170 @@ function defaultLine(sport){
 // GENERATE SUGGESTED PARLAYS (math)
 // ═══════════════════════════════════
 function generateParlays(picks){
-  // ══════════════════════════════════════════════════════════════
-  // ESTRUCTURA DE PARLAYS — JUNIO/JULIO 2026
+  // ══════════════════════════════════════════════════════════
+  // PARLAYS — SOLO CON PICKS QUE TIENEN EDGE REAL vs PINNACLE
   //
-  // FILOSOFÍA: partir de lo más seguro por liga
+  // Un parlay solo tiene sentido si CADA leg tiene EV positivo.
+  // Si un leg tiene edge negativo, arrastra todo el parlay al negativo.
   //
-  // PASO 1: Identificar el pick MÁS SEGURO de cada liga activa
-  //         (ganador con mayor probabilidad)
-  //
-  // PASO 2: Con esos picks construir:
-  //   • Conservador MLB   = top 2 favoritos de MLB
-  //   • Conservador LMB   = top 2 favoritos de LMB (si hay partidos)
-  //   • Conservador WC    = top 2 favoritos del Mundial (si hay partidos)
-  //   • Interligas        = el mejor de MLB + mejor de LMB + mejor del Mundial
-  //   • Balanceado        = los 3 mejores de todas las ligas
-  //   • Agresivo          = los 4-5 mejores (balanceado + 1-2 más)
-  // ══════════════════════════════════════════════════════════════
+  // Nota profesional: los parlays multiplican el margen de la casa.
+  // Un parlay de +EV requiere que TODOS sus legs sean +EV.
+  // ══════════════════════════════════════════════════════════
+  var parlays = [];
 
-  const parlays = [];
-
-  // Solo picks de tipo Ganador para armar parlays
-  const winners = picks
-    .filter(p => p.pick.pick.includes('Gana'))
-    .sort((a,b) => b.pick.prob - a.pick.prob);
-
-  if(winners.length < 2) return parlays;
-
-  // Agrupar por liga
-  const byLeague = {};
-  winners.forEach(p => {
-    const key = p.game._lg.key;
-    if(!byLeague[key]) byLeague[key] = [];
-    byLeague[key].push(p);
+  // Aplanar todos los picks de todos los partidos que tengan edge
+  var valuePicks = [];
+  picks.forEach(function(p){
+    var all = p.picks || [p.pick];
+    all.forEach(function(pk, pi){
+      if(pk.edge >= EDGE_MIN && pk.hasSharp){
+        valuePicks.push({ game:p.game, pick:pk, gameIdx:allPicks.indexOf(p), pickIdx:pi });
+      }
+    });
   });
 
-  // Top pick de cada liga (el más probable)
-  const topPerLeague = {};
-  Object.entries(byLeague).forEach(([key, ps]) => {
-    topPerLeague[key] = ps[0]; // ya ordenados por prob desc
+  if(!valuePicks.length) return parlays;
+
+  // Ordenar por edge desc
+  valuePicks.sort(function(a,b){ return b.pick.edge - a.pick.edge; });
+
+  // ── Evitar dos picks del mismo partido en un parlay ──
+  function uniqueGames(list, max){
+    var out=[], seen={};
+    for(var i=0;i<list.length && out.length<max;i++){
+      var gid = list[i].game.home+'|'+list[i].game.away;
+      if(!seen[gid]){ seen[gid]=1; out.push(list[i]); }
+    }
+    return out;
+  }
+
+  function build(tipo, subtipo, legs, razon){
+    if(legs.length < 2) return;
+    var cP = legs.reduce(function(a,l){ return a*l.pick.prob; },1);
+    var cO = legs.reduce(function(a,l){ return a*l.pick.odds; },1);
+    var cE = cP*cO - 1;
+    parlays.push({ tipo:tipo, subtipo:subtipo, picks:legs, razon:razon,
+                   _prob:cP, _odds:cO, _ev:cE });
+  }
+
+  // ── SINGLE PLAY: si solo hay 1 pick con edge, recomendarlo solo ──
+  if(valuePicks.length === 1){
+    var one = valuePicks[0];
+    parlays.push({
+      tipo:'conservador', subtipo:'APUESTA SIMPLE (única con valor)',
+      picks:[one],
+      razon:'Solo 1 pick con edge ≥'+(EDGE_MIN*100)+'% hoy. Un parlay con este único leg no aplica — '
+        +'apuesta simple. Edge +'+(one.pick.edge*100).toFixed(1)+'% vs Pinnacle.',
+      _single:true
+    });
+    return parlays;
+  }
+
+  // ── 2 LEGS — los dos mejores edges ──
+  var top2 = uniqueGames(valuePicks, 2);
+  if(top2.length >= 2){
+    var avgE2 = top2.reduce(function(a,l){return a+l.pick.edge;},0)/top2.length;
+    build('conservador', '2 legs — mejor edge', top2,
+      'Los 2 picks con mayor ventaja sobre Pinnacle. Edge promedio +'+(avgE2*100).toFixed(1)+'%. '
+      +top2.map(function(l){ return l.game.home.split(' ').pop()+'/'+l.game.away.split(' ').pop()
+        +' ('+(l.pick.edge*100).toFixed(1)+'%)'; }).join(' · '));
+  }
+
+  // ── 3 LEGS ──
+  var top3 = uniqueGames(valuePicks, 3);
+  if(top3.length >= 3){
+    var avgE3 = top3.reduce(function(a,l){return a+l.pick.edge;},0)/top3.length;
+    build('balanceado', '3 legs — edge combinado', top3,
+      'Los 3 picks con mayor ventaja. Edge promedio +'+(avgE3*100).toFixed(1)+'%. '
+      +'Recuerda: cada leg adicional reduce la probabilidad de acierto.');
+  }
+
+  // ── 4 LEGS ──
+  var top4 = uniqueGames(valuePicks, 4);
+  if(top4.length >= 4){
+    var avgE4 = top4.reduce(function(a,l){return a+l.pick.edge;},0)/top4.length;
+    build('agresivo', '4 legs — máximo retorno', top4,
+      'Los 4 picks con ventaja. Edge promedio +'+(avgE4*100).toFixed(1)+'%. '
+      +'Mayor cuota pero probabilidad combinada baja. Solo si aceptas alta varianza.');
+  }
+
+  // ── INTER-LIGAS: mejor pick con edge de cada liga ──
+  var byLg = {};
+  valuePicks.forEach(function(vp){
+    var k = vp.game._lg.key;
+    if(!byLg[k]) byLg[k] = vp;
   });
-
-  // ── OPCIÓN A: CONSERVADOR MLB (top 2 MLB) ──
-  const mlbWinners = (byLeague['mlb'] || []).slice(0, 3);
-  if(mlbWinners.length >= 2){
-    // Opción 1: Los 2 más seguros de MLB
-    const cons1 = mlbWinners.slice(0,2);
-    const cP1 = cons1.reduce((a,l)=>a*l.pick.prob,1);
-    parlays.push({
-      tipo:'conservador',
-      subtipo:'MLB — 2 favoritos',
-      picks: cons1,
-      razon: '⚾ Los 2 favoritos más seguros de MLB hoy. '
-        + cons1.map(l=>{
-            const r=l.game._mlbRecord;
-            return (r?l.game.home+' '+r.home:l.game.home)+' vs '+(r?l.game.away+' '+r.away:l.game.away);
-          }).join(' · ')
-        + '. Prob combinada '+(cP1*100).toFixed(0)+'%.'
-    });
-
-    // Opción 2: Los 3 más seguros de MLB (si hay 3)
-    if(mlbWinners.length >= 3){
-      const cons2 = mlbWinners.slice(0,3);
-      const cP2 = cons2.reduce((a,l)=>a*l.pick.prob,1);
-      parlays.push({
-        tipo:'conservador',
-        subtipo:'MLB — 3 favoritos',
-        picks: cons2,
-        razon: '⚾ Los 3 favoritos más seguros de MLB. Más legs = más retorno pero menos prob. '
-          + 'Prob combinada '+(cP2*100).toFixed(0)+'%.'
-      });
-    }
-  }
-
-  // ── OPCIÓN B: CONSERVADOR LMB ──
-  const lmbWinners = (byLeague['lmb'] || []).slice(0, 2);
-  if(lmbWinners.length >= 2){
-    const cPL = lmbWinners.reduce((a,l)=>a*l.pick.prob,1);
-    parlays.push({
-      tipo:'conservador',
-      subtipo:'LMB — 2 favoritos',
-      picks: lmbWinners,
-      razon: '🇲🇽⚾ Los 2 favoritos más seguros de la Liga Mexicana. '
-        + lmbWinners.map(l=>l.game.home+' vs '+l.game.away).join(' · ')
-        + '. Prob combinada '+(cPL*100).toFixed(0)+'%.'
-    });
-  }
-
-  // ── OPCIÓN C: CONSERVADOR MUNDIAL ──
-  const wcWinners = (byLeague['wc'] || []).slice(0, 2);
-  if(wcWinners.length >= 2){
-    const cPW = wcWinners.reduce((a,l)=>a*l.pick.prob,1);
-    parlays.push({
-      tipo:'conservador',
-      subtipo:'Mundial — 2 favoritos',
-      picks: wcWinners,
-      razon: '🌍 Los 2 favoritos más seguros del Mundial 26. '
-        + wcWinners.map(l=>l.game.home+' vs '+l.game.away).join(' · ')
-        + '. Prob combinada '+(cPW*100).toFixed(0)+'%.'
-    });
-  }
-
-  // ── BALANCEADO: Tomar el mejor de cada liga activa ──
-  // El mejor pick de MLB + el mejor de LMB + el mejor del Mundial
-  const activeSports = Object.keys(topPerLeague);
-  if(activeSports.length >= 2){
-    const interLegs = activeSports
-      .map(k => topPerLeague[k])
-      .filter(Boolean)
-      .sort((a,b) => b.pick.prob - a.pick.prob)
-      .slice(0,4);
-
-    if(interLegs.length >= 2){
-      const cPInter = interLegs.reduce((a,l)=>a*l.pick.prob,1);
-      const ligas = [...new Set(interLegs.map(p=>p.game._lg.name))].join(' + ');
-      parlays.push({
-        tipo:'balanceado',
-        subtipo:'Inter-ligas: '+ligas,
-        picks: interLegs,
-        razon: '🏆 Un favorito por liga: '
-          + interLegs.map(l=>l.game._lg.name+': '+l.game.home.split(' ').pop()+' ('+( l.pick.prob*100).toFixed(0)+'%)').join(' · ')
-          + '. Diversificación entre '+(interLegs.length)+' deportes/ligas.'
-      });
-    }
-  }
-
-  // ── AGRESIVO: Los mejores de todas las ligas combinados ──
-  // Tomar los 4-5 picks con mejor probabilidad de todas las ligas
-  const topAll = winners
-    .filter((p,i,arr) => {
-      // Max 2 por liga para diversificar
-      const sameLeague = arr.filter(x=>x.game._lg.key===p.game._lg.key);
-      return sameLeague.indexOf(p) < 2;
-    })
-    .slice(0,4);
-
-  if(topAll.length >= 3){
-    const cPAgr = topAll.reduce((a,l)=>a*l.pick.prob,1);
-    const cOAgr = topAll.reduce((a,l)=>a*l.pick.odds,1);
-    parlays.push({
-      tipo:'agresivo',
-      subtipo: topAll.length+' legs — todas las ligas',
-      picks: topAll,
-      razon: '🔥 Los '+topAll.length+' picks más fuertes del día (máx 2 por liga). '
-        + 'Cuota combinada '+cOAgr.toFixed(2)+'x. '
-        + 'Prob combinada '+(cPAgr*100).toFixed(0)+'%.'
-    });
+  var lgKeys = Object.keys(byLg);
+  if(lgKeys.length >= 2){
+    var interLegs = lgKeys.map(function(k){ return byLg[k]; }).slice(0,4);
+    var ligas = interLegs.map(function(l){ return l.game._lg.name; }).join(' + ');
+    build('multiliga', 'Inter-ligas: '+ligas, interLegs,
+      'Un pick con edge por cada liga activa. Diversificación entre '+interLegs.length+' ligas.');
   }
 
   return parlays;
 }
 
-
 function renderPicksTable(){
   document.getElementById('picksSection').style.display='block';
-  const tbody=document.getElementById('picksBody');
+  var tbody=document.getElementById('picksBody');
   if(!allPicks.length){
-    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:16px">Sin picks generados</td></tr>';
+    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--tx3);padding:16px">Sin picks</td></tr>';
+    renderPickCards();
     return;
   }
 
-  let html='';
+  var html='';
   allPicks.forEach(function(p,i){
-    const g=p.game;
-    const allP=p.picks||[p.pick];
-    const n=allP.length;
-    const score=(g.homeScore!=null)?(' <span style="color:var(--tx3)">'+g.homeScore+'-'+g.awayScore+'</span>'):'';
-    const pitchers=g.homePitcher?('<div style="font-size:.57rem;color:var(--tx3)">P: '+g.homePitcher+' vs '+(g.awayPitcher||'?')+'</div>'):'';
-    const rec=g._mlbRecord||g._espnRecord;
-    let recStr='';
-    if(rec){
-      if(typeof rec==='object') recStr='<div style="font-size:.56rem;color:var(--tx3)">'+(rec.home||'')+' vs '+(rec.away||'')+'</div>';
-      else recStr='<div style="font-size:.56rem;color:var(--tx3)">'+rec+'</div>';
+    var g=p.game;
+    var allP=p.picks||[p.pick];
+    var n=allP.length;
+    var score=(g.homeScore!=null)?(' <span style="color:var(--tx3)">'+g.homeScore+'-'+g.awayScore+'</span>'):'';
+    var pitchers=g.homePitcher?('<div style="font-size:.57rem;color:var(--tx3)">P: '+g.homePitcher+' vs '+(g.awayPitcher||'?')+'</div>'):'';
+    var rec=g._mlbRecord||g._espnRecord;
+    var recStr='';
+    if(rec&&typeof rec==='object') recStr='<div style="font-size:.56rem;color:var(--tx3)">'+(rec.home||'')+' vs '+(rec.away||'')+'</div>';
+    var srcTag='';
+    if(g._odds){
+      if(g._odds.hasSharp&&g._odds.hasBet365) srcTag='<div style="font-size:.55rem;color:var(--green)">🎯 Pinnacle + Bet365</div>';
+      else if(g._odds.hasSharp) srcTag='<div style="font-size:.55rem;color:var(--gold)">🎯 Pinnacle (sin Bet365)</div>';
+      else srcTag='<div style="font-size:.55rem;color:var(--ora)">⚠️ Sin Pinnacle</div>';
     }
-    const advice=g._advice?('<div style="font-size:.57rem;color:var(--ora)">'+g._advice+'</div>'):'';
-    const timeDiv=g.timeStr?('<div style="font-size:.57rem;color:var(--tx3)">'+g.timeStr+'</div>'):'';
-    const venueDiv=g.venue?('<div style="font-size:.56rem;color:var(--tx3)">'+g.venue+'</div>'):'';
 
     allP.forEach(function(pk,pi){
-      const pClass=pk.prob>=0.62?'phi':pk.prob>=0.48?'pmd':'plo';
-      const barColor=pk.prob>=0.62?'var(--green)':pk.prob>=0.48?'var(--gold)':'var(--red)';
-      const evClass=pk.ev>0.05?'pill-ev-p':pk.ev>0?'pill-ev-u':'pill-ev-n';
-      const cfClass='cf-'+(pk.conf==='alta'?'a':pk.conf==='media'?'m':'b');
-      const icon=pk.pick.indexOf('Gana')>=0||pk.pick==='Empate'?'🏆':
-                 pk.src.indexOf('Corners')>=0?'🚩':
-                 pk.src.indexOf('Tarjetas')>=0?'🟨':
-                 pk.src.indexOf('Hits')>=0?'💥':
-                 pk.pick.indexOf('Over')===0||pk.pick.indexOf('Under')===0?'📊':
-                 pk.pick.indexOf('Ambos')===0?'⚽':
-                 pk.src.indexOf('Run Line')>=0||pk.src.indexOf('Spread')>=0?'📏':'🎯';
-      const borderStyle=pi>0?'border-top:1px dashed var(--b1)':'';
-      const barWidth=Math.min(pk.prob*100,100).toFixed(0);
-      const evStr='EV'+(pk.ev>0?'+':'')+(pk.ev*100).toFixed(1)+'%';
-      const probStr=(pk.prob*100).toFixed(0)+'%';
-      const oddsStr='@'+parseFloat(pk.odds||1.9).toFixed(2);
+      var hasEdge = pk.edge >= EDGE_MIN;
+      var edgeColor = !pk.hasSharp ? 'var(--tx3)' : hasEdge ? 'var(--green)' : pk.edge>0 ? 'var(--gold)' : 'var(--red)';
+      var rowBg = hasEdge ? 'background:rgba(0,230,118,.05);' : '';
+      var borderStyle = pi>0 ? 'border-top:1px dashed var(--b1);' : '';
+      var icon = pk.pick.indexOf('Gana')>=0||pk.pick==='Empate' ? '🏆' :
+                 pk.pick.indexOf('Ambos')===0 ? '⚽' :
+                 pk.src.indexOf('Run Line')>=0||pk.src.indexOf('Spread')>=0 ? '📏' : '📊';
+      var verdict = !pk.hasSharp ? 'Sin ref.' : hasEdge ? '✅ APOSTAR' : pk.edge>0 ? '⚠️ Bajo' : '❌ NO';
 
-      html+='<tr style="'+borderStyle+'">';
-
-      // Liga cell — only on first pick of game
+      html+='<tr style="'+borderStyle+rowBg+'">';
       if(pi===0){
-        html+='<td rowspan="'+n+'" style="vertical-align:top;padding-top:10px">';
-        html+='<span class="lbadge '+g._lg.badge+'">'+g._lg.name+'</span>';
-        html+='</td>';
-      }
-
-      // Partido cell — only on first pick
-      if(pi===0){
+        html+='<td rowspan="'+n+'" style="vertical-align:top;padding-top:10px"><span class="lbadge '+g._lg.badge+'">'+g._lg.name+'</span></td>';
         html+='<td rowspan="'+n+'" style="vertical-align:top;padding-top:10px">';
         html+='<div class="pmatch">'+g.home+score+' vs '+g.away+'</div>';
-        html+=pitchers+recStr+timeDiv+venueDiv+advice;
+        html+=pitchers+recStr;
+        html+='<div style="font-size:.57rem;color:var(--tx3)">'+(g.timeStr||'')+'</div>'+srcTag;
         html+='</td>';
       }
-
-      // Pick cell
-      html+='<td>';
-      html+='<div class="pbet">'+icon+' '+pk.pick+'</div>';
-      html+='<div style="font-size:.56rem;color:var(--tx3)">'+pk.src+'</div>';
-      html+='</td>';
-
-      // Prob
-      html+='<td>';
-      html+='<div class="prob-wrap">';
-      html+='<span class="'+pClass+'">'+probStr+'</span>';
-      html+='<div class="prob-bar"><div class="prob-fill" style="width:'+barWidth+'%;background:'+barColor+'"></div></div>';
-      html+='</div></td>';
-
-      // Cuota
-      html+='<td><span class="pill pill-odds">'+oddsStr+'</span></td>';
-
-      // EV
-      html+='<td><span class="pill '+evClass+'">'+evStr+'</span></td>';
-
-      // Conf
-      html+='<td><span class="'+cfClass+'">'+pk.conf.toUpperCase()+'</span></td>';
-
-      // Agregar button
-      html+='<td><button class="add-btn" id="ab_'+i+'_'+pi+'" onclick="addPickSpecific('+i+','+pi+')" style="font-size:.58rem;padding:2px 7px">+ Agregar</button></td>';
-
+      html+='<td><div class="pbet">'+icon+' '+pk.pick+'</div><div style="font-size:.56rem;color:var(--tx3)">'+pk.src+'</div></td>';
+      // Pinnacle
+      html+='<td style="font-family:monospace;font-size:.66rem;color:var(--cyan)">'
+        +(pk.sharpProb ? (pk.sharpProb*100).toFixed(0)+'%' : '<span style="color:var(--tx3)">—</span>')+'</td>';
+      // Tu cuota (Bet365) + prob implícita
+      html+='<td><span class="pill pill-odds">@'+pk.odds.toFixed(2)+'</span>'
+        +'<div style="font-size:.55rem;color:var(--tx3)">'+(pk.impliedProb*100).toFixed(0)+'%</div></td>';
+      // EDGE
+      html+='<td><span style="font-family:monospace;font-size:.72rem;font-weight:700;color:'+edgeColor+'">'
+        +(pk.edge>0?'+':'')+(pk.edge*100).toFixed(1)+'%</span></td>';
+      // Veredicto
+      html+='<td style="font-size:.6rem;font-weight:700;color:'+edgeColor+'">'+verdict+'</td>';
+      // Agregar
+      html+='<td><button class="add-btn" id="ab_'+i+'_'+pi+'" onclick="addPickSpecific('+i+','+pi+')" style="font-size:.58rem;padding:2px 7px'
+        +(hasEdge?'':';opacity:.5')+'">+ Agregar</button></td>';
       html+='</tr>';
     });
   });
@@ -1676,8 +1604,6 @@ function renderPicksTable(){
   renderPickCards();
 }
 
-
-// ── Cards de picks para móvil — DOM methods, sin strings con comillas ──
 function renderPickCards(){
   var el = document.getElementById('pickCards');
   if(!el) return;
@@ -1691,7 +1617,6 @@ function renderPickCards(){
     var card = document.createElement('div');
     card.className = 'pick-card';
 
-    // Header: liga + partido + info
     var head = document.createElement('div');
     head.className = 'pick-card-head';
 
@@ -1711,46 +1636,69 @@ function renderPickCards(){
     var rec = g._mlbRecord || g._espnRecord;
     var recTxt = '';
     if(rec && typeof rec === 'object') recTxt = (rec.home||'')+' vs '+(rec.away||'')+' · ';
-    sub.textContent = recTxt + (g.timeStr||'') + (g.venue ? ' · '+g.venue : '');
+    var srcTxt = '';
+    if(g._odds){
+      if(g._odds.hasSharp && g._odds.hasBet365) srcTxt = ' · 🎯 Pinnacle + Bet365';
+      else if(g._odds.hasSharp) srcTxt = ' · 🎯 Pinnacle (sin Bet365)';
+      else if(g._odds.hasBet365) srcTxt = ' · ⚠️ Bet365 sin referencia sharp';
+      else srcTxt = ' · ⚠️ Solo modelo';
+    }
+    sub.textContent = recTxt + (g.timeStr||'') + srcTxt;
     head.appendChild(sub);
-
     card.appendChild(head);
 
-    // Pick rows
     allP.forEach(function(pk, pi){
       var row = document.createElement('div');
       row.className = 'pick-row';
+      var hasEdge = pk.edge >= EDGE_MIN;
+      if(hasEdge) row.style.background = 'rgba(0,230,118,.05)';
 
       var left = document.createElement('div');
       left.className = 'pick-row-l';
+
       var nm = document.createElement('div');
       nm.className = 'pick-row-name';
       var icon = pk.pick.indexOf('Gana')>=0||pk.pick==='Empate' ? '🏆' :
-                 pk.src.indexOf('Corners')>=0 ? '🚩' :
-                 pk.src.indexOf('Tarjetas')>=0 ? '🟨' :
-                 pk.src.indexOf('Hits')>=0 ? '💥' :
                  pk.pick.indexOf('Ambos')===0 ? '⚽' :
                  pk.src.indexOf('Run Line')>=0||pk.src.indexOf('Spread')>=0 ? '📏' : '📊';
       nm.textContent = icon+' '+pk.pick;
       left.appendChild(nm);
-      var sr = document.createElement('div');
-      sr.className = 'pick-row-src';
-      sr.textContent = pk.src + ' · @' + parseFloat(pk.odds||1.9).toFixed(2)
-        + ' · EV ' + (pk.ev>0?'+':'') + (pk.ev*100).toFixed(1) + '%';
-      left.appendChild(sr);
+
+      // Línea de análisis: modelo / pinnacle / tu cuota
+      var an = document.createElement('div');
+      an.className = 'pick-row-src';
+      var parts = [];
+      if(pk.sharpProb) parts.push('Pinnacle '+(pk.sharpProb*100).toFixed(0)+'%');
+      if(pk.modelProb) parts.push('Modelo '+(pk.modelProb*100).toFixed(0)+'%');
+      parts.push('Bet365 @'+pk.odds.toFixed(2)+' ('+(pk.impliedProb*100).toFixed(0)+'%)');
+      an.textContent = parts.join(' · ');
+      left.appendChild(an);
+
+      // Veredicto de edge
+      var vd = document.createElement('div');
+      vd.style.cssText = 'font-size:.62rem;font-weight:700;margin-top:2px;color:'
+        + (hasEdge ? 'var(--green)' : pk.edge > 0 ? 'var(--gold)' : 'var(--red)');
+      if(!pk.hasSharp){
+        vd.textContent = '⚠️ Sin referencia Pinnacle — solo modelo';
+        vd.style.color = 'var(--tx3)';
+      } else if(hasEdge){
+        vd.textContent = '✅ EDGE +'+(pk.edge*100).toFixed(1)+'% — APOSTAR';
+      } else if(pk.edge > 0){
+        vd.textContent = '⚠️ Edge +'+(pk.edge*100).toFixed(1)+'% — por debajo del mínimo';
+      } else {
+        vd.textContent = '❌ Edge '+(pk.edge*100).toFixed(1)+'% — NO APOSTAR';
+      }
+      left.appendChild(vd);
       row.appendChild(left);
 
       var right = document.createElement('div');
       right.className = 'pick-row-r';
-      var pr = document.createElement('span');
-      pr.className = 'pick-row-prob';
-      pr.textContent = (pk.prob*100).toFixed(0)+'%';
-      right.appendChild(pr);
 
       var btn = document.createElement('button');
       btn.className = 'pick-add';
       btn.id = 'pc_'+i+'_'+pi;
       btn.textContent = '+';
+      if(!hasEdge){ btn.style.borderColor='var(--b2)'; btn.style.color='var(--tx3)'; }
       btn.onclick = (function(gi,ppi,b){
         return function(){
           addPickSpecific(gi,ppi);
@@ -1759,8 +1707,8 @@ function renderPickCards(){
         };
       })(i,pi,btn);
       right.appendChild(btn);
-
       row.appendChild(right);
+
       card.appendChild(row);
     });
 
@@ -1769,84 +1717,175 @@ function renderPickCards(){
 }
 
 function renderParlays(){
-  document.getElementById('parlaysSection').style.display='block';
-  const grid=document.getElementById('parlaysGrid');
-  const TIPO={conservador:{label:'CONSERVADOR',cls:'t-cons'},balanceado:{label:'BALANCEADO',cls:'t-bal'},multiliga:{label:'MULTI-LIGA',cls:'t-multi'},agresivo:{label:'AGRESIVO',cls:'t-agr'}};
-  grid.innerHTML=suggestedParlays.map((p,pi)=>{
-    // Use subtipo if available for display
-    const displayLabel = p.subtipo ? p.subtipo.toUpperCase() : (TIPO[p.tipo]?.label || p.tipo.toUpperCase());
-    const cP=p.picks.reduce((a,pk)=>a*pk.pick.prob,1);
-    const cO=p.picks.reduce((a,pk)=>a*pk.pick.odds,1);
-    const cE=(cP*cO)-1;
-    const t=TIPO[p.tipo]||TIPO.balanceado;
-    return`<div class="pcard">
-      <div class="pc-hdr">
-        <div class="pc-name ${t.cls}">${displayLabel}</div>
-        <div class="pc-nums">
-          <div class="pcn"><div class="l">Prob</div><div class="v" style="color:${cP>=.45?'var(--green)':'var(--gold)'}">${(cP*100).toFixed(0)}%</div></div>
-          <div class="pcn"><div class="l">Cuota</div><div class="v" style="color:var(--gold)">${cO.toFixed(2)}x</div></div>
-          <div class="pcn"><div class="l">EV</div><div class="v" style="color:${cE>0?'var(--green)':'var(--red)'}">${cE>0?'+':''}${(cE*100).toFixed(0)}%</div></div>
-        </div>
-      </div>
-      <div class="pc-legs">
-        ${p.picks.map(pk=>`<div class="pc-leg">
-          <div class="pc-leg-info">
-            <div class="pc-leg-m">${pk.game.home} vs ${pk.game.away}</div>
-            <div class="pc-leg-b">${pk.pick.pick}</div>
-          </div>
-          <div class="pc-leg-r">
-            <span class="pill pill-odds">@${parseFloat(pk.pick.odds||1.9).toFixed(2)}</span>
-            ${pk.game._odds?.homeAmer!=null?`<span style="font-size:.58rem;color:var(--tx3)">(${pk.game._odds.homeAmer>0?'+':''}${pk.game._odds.homeAmer})</span>`:''}
-            <span style="font-family:monospace;font-size:.62rem;color:${pk.pick.prob>=.55?'var(--green)':'var(--gold)'}">${(pk.pick.prob*100).toFixed(0)}%</span>
-            <span class="lbadge ${pk.game._lg.badge}">${pk.game._lg.name}</span>
-          </div>
-        </div>`).join('')}
-      </div>
-      <div class="pc-foot">
-        <div style="display:flex;flex-direction:column;gap:5px;flex:1">
-          <div class="pc-razon">${p.razon}</div>
-          <div style="font-size:.63rem;color:var(--tx3)">Si apuestas $500 → retorno potencial: <strong style="color:var(--green)">$${(500*cO).toFixed(0)}</strong></div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button class="btn-use" onclick="useParlay(${pi})">Usar este →</button>
-          <button class="btn-ai" style="padding:5px 10px;font-size:.65rem" onclick="consultarIA(${pi})">🤖 Ver análisis IA</button>
-        </div>
-      </div>
-    </div>`;
+  var sec = document.getElementById('parlaysSection');
+  var grid = document.getElementById('parlaysGrid');
+  if(!suggestedParlays.length){
+    sec.style.display='block';
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--tx3);font-size:.78rem;line-height:1.7">'
+      +'<div style="font-size:1.6rem;margin-bottom:8px">🚫</div>'
+      +'<strong style="color:var(--txt);font-size:.9rem">Sin parlays recomendados</strong><br>'
+      +'No hay picks con ventaja suficiente sobre Pinnacle para armar un parlay.<br>'
+      +'<span style="color:var(--tx3);font-size:.7rem">Un parlay solo tiene valor si TODOS sus legs tienen edge positivo.</span>'
+      +'</div>';
+    return;
+  }
+  sec.style.display='block';
+
+  var TIPO={conservador:{cls:'t-cons'},balanceado:{cls:'t-bal'},multiliga:{cls:'t-multi'},agresivo:{cls:'t-agr'}};
+
+  grid.innerHTML = suggestedParlays.map(function(p,pi){
+    var t = TIPO[p.tipo] || TIPO.balanceado;
+    var label = (p.subtipo || p.tipo).toUpperCase();
+    var cP = p.picks.reduce(function(a,l){ return a*l.pick.prob; },1);
+    var cO = p.picks.reduce(function(a,l){ return a*l.pick.odds; },1);
+    var cE = cP*cO - 1;
+    var avgEdge = p.picks.reduce(function(a,l){ return a+(l.pick.edge||0); },0)/p.picks.length;
+    var bet = 500;
+    var ret = Math.round(bet*cO);
+
+    var legsHtml = p.picks.map(function(l){
+      var edgeStr = (l.pick.edge>0?'+':'')+(l.pick.edge*100).toFixed(1)+'%';
+      return '<div class="pc-leg">'
+        +'<div class="pc-leg-info">'
+          +'<div class="pc-leg-m">'+l.game.home+' vs '+l.game.away+'</div>'
+          +'<div class="pc-leg-b">'+l.pick.pick+'</div>'
+          +'<div style="font-size:.55rem;color:var(--tx3)">Pinnacle '+(l.pick.sharpProb?(l.pick.sharpProb*100).toFixed(0)+'%':'—')
+            +' · Bet365 '+(l.pick.impliedProb*100).toFixed(0)+'%</div>'
+        +'</div>'
+        +'<span class="pill pill-odds">@'+l.pick.odds.toFixed(2)+'</span>'
+        +'<span style="font-family:monospace;font-size:.66rem;font-weight:700;color:var(--green)">'+edgeStr+'</span>'
+        +'<span class="lbadge '+l.game._lg.badge+'">'+l.game._lg.name+'</span>'
+      +'</div>';
+    }).join('');
+
+    return '<div class="pcard">'
+      +'<div class="pc-hdr">'
+        +'<div class="pc-name '+t.cls+'">'+label+'</div>'
+        +'<div class="pc-nums">'
+          +'<div class="pcn"><div class="l">Prob</div><div class="v" style="color:'+(cP>=.35?'var(--green)':'var(--gold)')+'">'+(cP*100).toFixed(0)+'%</div></div>'
+          +'<div class="pcn"><div class="l">Cuota</div><div class="v" style="color:var(--gold)">'+cO.toFixed(2)+'x</div></div>'
+          +'<div class="pcn"><div class="l">Edge prom</div><div class="v" style="color:var(--green)">+'+(avgEdge*100).toFixed(1)+'%</div></div>'
+        +'</div>'
+      +'</div>'
+      +'<div class="pc-legs">'+legsHtml+'</div>'
+      +'<div class="pc-foot">'
+        +'<div class="pc-why">'+p.razon
+          +'<div style="margin-top:5px;color:var(--tx3)">Si apuestas $'+bet+' → retorno potencial: <strong style="color:var(--green)">$'+ret.toLocaleString('es-MX')+'</strong></div>'
+        +'</div>'
+        +'<div class="pc-acts">'
+          +'<button class="pc-use" onclick="useParlay('+pi+')">Usar este →</button>'
+          +'<button class="pc-ai" onclick="analyzeParlay('+pi+')">🤖 Ver análisis IA</button>'
+        +'</div>'
+      +'</div>'
+    +'</div>';
   }).join('');
 }
 
-// ═══════════════════════════════════
-// PARLAY MANAGEMENT
-// ═══════════════════════════════════
-function addPick(i){ addPickSpecific(i,0); }
-
-function addPickSpecific(i,pi){
-  const p=allPicks[i]; if(!p)return;
-  const pk=(p.picks||[p.pick])[pi]||p.pick;
-  // Check duplicate by match+betType
-  if(parlayLegs.find(l=>l.idx===i&&l.betType===pk.pick)){toast('Este pick ya está en el parlay','warn');return;}
-  if(parlayLegs.length>=5){toast('Máximo 5 legs','err');return;}
-  parlayLegs.push({
-    idx:i, pickIdx:pi,
-    match:`${p.game.home} vs ${p.game.away}`,
-    betType:pk.pick, prob:pk.prob,
-    odds:parseFloat(pk.odds||1.9), ev:pk.ev,
-    league:p.game._lg.name
+function useParlay(pi){
+  var p = suggestedParlays[pi];
+  if(!p) return;
+  parlayLegs = [];
+  document.querySelectorAll('.add-btn').forEach(function(b){ b.className='add-btn'; b.textContent='+ Agregar'; });
+  document.querySelectorAll('.pick-add').forEach(function(b){ b.className='pick-add'; b.textContent='+'; });
+  p.picks.forEach(function(l){
+    var gi = (l.gameIdx != null) ? l.gameIdx : allPicks.findIndex(function(x){ return x.game === l.game; });
+    var pi2 = (l.pickIdx != null) ? l.pickIdx : 0;
+    if(gi >= 0) addPickSpecific(gi, pi2);
   });
-  const btn=document.getElementById(`ab_${i}_${pi}`)||document.getElementById(`ab_${i}`);
-  if(btn){btn.className='add-btn added';btn.textContent='✓';}
-  updateParlay();
-  toast(`✅ ${p.game.home} vs ${p.game.away} — ${pk.pick}`,'ok');
+  toast('Parlay cargado en el constructor ↓','ok');
+  setTimeout(function(){
+    var el=document.getElementById('plegs');
+    if(el) el.scrollIntoView({behavior:'smooth',block:'center'});
+  },200);
 }
 
-function useParlay(pi){
-  const p=suggestedParlays[pi];if(!p)return;
-  parlayLegs=[];
-  document.querySelectorAll('.add-btn').forEach(b=>{b.className='add-btn';b.textContent='+ Agregar';});
-  p.picks.forEach(pk=>{const i=allPicks.indexOf(pk);if(i>=0)addPick(i);});
-  toast('Parlay cargado en el constructor ↓','ok');
-  setTimeout(()=>document.getElementById('plegs').scrollIntoView({behavior:'smooth',block:'center'}),200);
+// ── Agregar un pick específico al constructor ──
+function addPickSpecific(i, pi){
+  var p = allPicks[i];
+  if(!p) return;
+  var arr = p.picks || [p.pick];
+  var pk = arr[pi] || p.pick;
+  if(!pk) return;
+
+  if(parlayLegs.find(function(l){ return l.idx===i && l.betType===pk.pick; })){
+    toast('Ese pick ya está en el parlay','warn');
+    return;
+  }
+  if(parlayLegs.length >= 5){ toast('Máximo 5 legs','err'); return; }
+
+  parlayLegs.push({
+    idx: i, pickIdx: pi,
+    match: p.game.home+' vs '+p.game.away,
+    betType: pk.pick,
+    prob: pk.prob,
+    odds: parseFloat(pk.odds||1.9),
+    ev: pk.ev,
+    edge: (pk.edge != null) ? pk.edge : 0,
+    sharpProb: pk.sharpProb || null,
+    hasSharp: !!pk.hasSharp,
+    league: p.game._lg.name
+  });
+
+  var b1 = document.getElementById('ab_'+i+'_'+pi);
+  if(b1){ b1.className='add-btn added'; b1.textContent='✓'; }
+  var b2 = document.getElementById('pc_'+i+'_'+pi);
+  if(b2){ b2.className='pick-add added'; b2.textContent='✓'; }
+
+  updateParlay();
+  var eg = (pk.edge!=null) ? pk.edge : 0;
+  if(eg < 0) toast('⚠️ Agregado, pero este pick tiene edge NEGATIVO','warn');
+  else toast('✅ '+pk.pick,'ok');
+}
+
+// ── Análisis IA opcional (Claude) ──
+async function analyzeParlay(pi){
+  var p = suggestedParlays[pi];
+  if(!p) return;
+  var box = document.getElementById('aiBox');
+  var body = document.getElementById('aiBody');
+  if(!box || !body) return;
+  box.classList.add('show');
+  body.innerHTML = '<div style="color:var(--tx3)">Analizando con Claude…</div>';
+  box.scrollIntoView({behavior:'smooth', block:'center'});
+
+  var legsTxt = p.picks.map(function(l){
+    return '- '+l.game.home+' vs '+l.game.away+' | '+l.pick.pick
+      +' | Bet365 @'+l.pick.odds.toFixed(2)
+      +' | Pinnacle (sin margen): '+(l.pick.sharpProb?(l.pick.sharpProb*100).toFixed(1)+'%':'N/D')
+      +' | Prob implícita de tu cuota: '+(l.pick.impliedProb*100).toFixed(1)+'%'
+      +' | EDGE: '+(l.pick.edge>0?'+':'')+(l.pick.edge*100).toFixed(1)+'%';
+  }).join('\n');
+
+  var cO = p.picks.reduce(function(a,l){ return a*l.pick.odds; },1);
+  var cP = p.picks.reduce(function(a,l){ return a*l.pick.prob; },1);
+
+  var prompt = 'Eres un analista de apuestas profesional. Se te presenta un parlay construido comparando '
+    +'las cuotas de Bet365 contra Pinnacle (mercado sharp, ya sin margen).\n\n'
+    +'PARLAY:\n'+legsTxt+'\n\n'
+    +'Cuota combinada: '+cO.toFixed(2)+'x\n'
+    +'Probabilidad combinada: '+(cP*100).toFixed(1)+'%\n\n'
+    +'Da un veredicto honesto en 3 párrafos cortos, en español:\n'
+    +'1. ¿El edge es real o es ruido? Considera que un edge <3% suele estar dentro del margen de error.\n'
+    +'2. Riesgos específicos de estos legs (correlación, varianza, lesiones típicas de estos deportes).\n'
+    +'3. Recomendación clara: apostar, reducir monto, o pasar. Sé directo. NO prometas ganancias.';
+
+  try{
+    var r = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens:1000,
+        messages:[{role:'user', content:prompt}]
+      })
+    });
+    var d = await r.json();
+    var txt = (d.content||[]).filter(function(x){return x.type==='text';}).map(function(x){return x.text;}).join('\n');
+    body.innerHTML = txt.split('\n').filter(function(l){return l.trim();})
+      .map(function(l){ return '<p style="margin:0 0 8px">'+l+'</p>'; }).join('');
+  }catch(e){
+    body.innerHTML = '<div style="color:var(--red)">Error al consultar la IA: '+e.message+'</div>';
+  }
 }
 
 function removeLeg(i){
@@ -1857,81 +1896,77 @@ function removeLeg(i){
 }
 
 function updateParlay(){
-  const list=document.getElementById('plegs'),regBtn=document.getElementById('btnReg');
+  var list=document.getElementById('plegs'), regBtn=document.getElementById('btnReg');
   if(!parlayLegs.length){
     list.innerHTML='<div class="pempty">Usa un parlay sugerido o agrega picks individuales desde la tabla ↑</div>';
-    ['psL','psP','psO','psE'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=id==='psL'?'0':'—';});
-    regBtn.disabled=true;document.getElementById('kellyBar').innerHTML='Agrega picks para ver el monto óptimo por Kelly Criterion.';return;
-  }
-  list.innerHTML=parlayLegs.map((l,i)=>{
-    const ec=l.ev>0.05?'var(--green)':l.ev>0?'var(--gold)':'var(--red)';
-    return`<div class="pleg">
-      <div class="pleg-info"><div class="pleg-m">${l.match}</div><div class="pleg-b">${l.betType}</div></div>
-      <div class="pleg-r">
-        <span style="font-family:monospace;font-size:.68rem;color:var(--green);font-weight:700">${(l.prob*100).toFixed(0)}%</span>
-        <span style="font-family:monospace;font-size:.68rem;color:var(--gold)">@${l.odds.toFixed(2)}</span>
-        <span style="font-family:monospace;font-size:.62rem;padding:1px 5px;border-radius:3px;background:${l.ev>0?'rgba(0,230,118,.08)':'rgba(255,23,68,.07)'};color:${ec};border:1px solid ${ec}44">EV${l.ev>0?'+':''}${(l.ev*100).toFixed(0)}%</span>
-        <button class="pleg-rm" onclick="removeLeg(${i})">✕</button>
-      </div>
-    </div>`;
-  }).join('');
-  const cP=parlayLegs.reduce((a,l)=>a*l.prob,1);
-  const cO=parlayLegs.reduce((a,l)=>a*l.odds,1);
-  const cE=(cP*cO)-1;
-  const kelly=cE>0?Math.min(0.15,((cP*cO-1)/(cO-1))*0.25):0;
-  const kellyAmt=kelly>0?Math.min(BET_MAX,Math.max(BET_MIN,Math.round(Math.max(S.totalBet||2000,2000)*kelly/100)*100)):BET_MIN;
-  document.getElementById('psL').textContent=parlayLegs.length;
-  const pEl=document.getElementById('psP');pEl.textContent=(cP*100).toFixed(1)+'%';pEl.style.color=cP>=.5?'var(--green)':cP>=.35?'var(--gold)':'var(--red)';
-  document.getElementById('psO').textContent=cO.toFixed(2)+'x';
-  const eEl=document.getElementById('psE');eEl.textContent=(cE>0?'+':'')+(cE*100).toFixed(1)+'%';eEl.style.color=cE>0.05?'var(--green)':cE>0?'var(--gold)':'var(--red)';
-  document.getElementById('kellyBar').innerHTML=`<strong>Kelly Criterion (25% fraccionado):</strong> Apuesta sugerida = <span class="kamt">$${kellyAmt.toLocaleString('es-MX')}</span> · EV: <strong style="color:${cE>0?'var(--green)':'var(--red)'}">${cE>0?'+':''}${(cE*100).toFixed(1)}%</strong>`;
-  document.getElementById('betAmt').value=kellyAmt;
-  regBtn.disabled=parlayLegs.length<2;
-}
-
-// ═══════════════════════════════════
-// CONSULTAR IA (opcional, bajo demanda)
-// ═══════════════════════════════════
-async function consultarIA(pi){
-  const p=suggestedParlays[pi];if(!p)return;
-  const aiBox=document.getElementById('aiBox');
-  const aiResult=document.getElementById('aiResult');
-  aiBox.classList.add('show');
-  aiResult.textContent='⏳ Consultando Claude… (~15s)';
-  aiBox.scrollIntoView({behavior:'smooth',block:'center'});
-
-  const legs=p.picks.map(pk=>`- ${pk.game.home} vs ${pk.game.away}: ${pk.pick.pick} @${parseFloat(pk.pick.odds||1.9).toFixed(2)} (Prob ${(pk.pick.prob*100).toFixed(0)}%, EV ${(pk.pick.ev*100).toFixed(1)}%)`).join('\n');
-  const prompt=`Analiza este parlay de apuestas deportivas y dame un veredicto profesional en 3-4 párrafos:
-
-PARLAY ${p.tipo.toUpperCase()}:
-${legs}
-
-Fecha: ${selDate}
-Prob. combinada: ${(p.picks.reduce((a,pk)=>a*pk.pick.prob,1)*100).toFixed(1)}%
-Cuota total: ${p.picks.reduce((a,pk)=>a*pk.pick.odds,1).toFixed(2)}x
-
-Analiza: ¿Tiene sentido este parlay? ¿Hay riesgos ocultos? ¿Cambiarías algún leg? ¿Qué factores externos podrían afectar? Dame una recomendación final clara.`;
-
-  try{
-    const ctrl=new AbortController();
-    const timer=setTimeout(()=>ctrl.abort(),50000);
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',signal:ctrl.signal,
-      headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:prompt}]})
+    ['psL','psP','psO','psE'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.textContent = (id==='psL') ? '0' : '—';
     });
-    clearTimeout(timer);
-    const data=await res.json();
-    const txt=(data.content||[]).find(b=>b.type==='text')?.text||'Sin respuesta';
-    aiResult.textContent=txt;
-  }catch(err){
-    aiResult.textContent=`Error al consultar IA: ${err.message}. Verifica tu conexión.`;
+    regBtn.disabled=true;
+    document.getElementById('kellyBar').innerHTML='Agrega picks para ver el monto óptimo por Kelly Criterion.';
+    return;
+  }
+
+  list.innerHTML = parlayLegs.map(function(l,i){
+    var eg = (l.edge!=null) ? l.edge : 0;
+    var ec = eg>=EDGE_MIN ? 'var(--green)' : eg>0 ? 'var(--gold)' : 'var(--red)';
+    var egStr = (l.hasSharp===false) ? 'sin ref.' : (eg>0?'+':'')+(eg*100).toFixed(1)+'%';
+    return '<div class="pleg">'
+      +'<div class="pleg-info">'
+        +'<div class="pleg-m">'+l.match+'</div>'
+        +'<div class="pleg-b">'+l.betType+'</div>'
+      +'</div>'
+      +'<div class="pleg-r">'
+        +'<span style="font-family:monospace;font-size:.68rem;color:'+ec+';font-weight:700">'+egStr+'</span>'
+        +'<span class="pill pill-odds">@'+parseFloat(l.odds).toFixed(2)+'</span>'
+        +'<span class="lbadge">'+l.league+'</span>'
+        +'<button class="pleg-x" onclick="removeLeg('+i+')">✕</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+
+  var cP = parlayLegs.reduce(function(a,l){ return a*l.prob; },1);
+  var cO = parlayLegs.reduce(function(a,l){ return a*parseFloat(l.odds); },1);
+  var cE = cP*cO - 1;
+  var avgEdge = parlayLegs.reduce(function(a,l){ return a+(l.edge||0); },0)/parlayLegs.length;
+  var allHaveEdge = parlayLegs.every(function(l){ return (l.edge||0) >= EDGE_MIN; });
+  var anyNegative = parlayLegs.some(function(l){ return (l.edge||0) < 0; });
+
+  var setV=function(id,val,color){
+    var el=document.getElementById(id);
+    if(el){ el.textContent=val; if(color) el.style.color=color; }
+  };
+  setV('psL', String(parlayLegs.length));
+  setV('psP', (cP*100).toFixed(1)+'%', cP>=0.35?'var(--green)':'var(--gold)');
+  setV('psO', cO.toFixed(2)+'x', 'var(--gold)');
+  setV('psE', (avgEdge>0?'+':'')+(avgEdge*100).toFixed(1)+'%', avgEdge>=EDGE_MIN?'var(--green)':avgEdge>0?'var(--gold)':'var(--red)');
+
+  // ── KELLY + VEREDICTO ──
+  var bar = document.getElementById('kellyBar');
+  var betEl = document.getElementById('betAmt');
+
+  if(anyNegative){
+    bar.innerHTML='<div style="color:var(--red);font-weight:700">⛔ Este parlay tiene al menos un leg con edge NEGATIVO.</div>'
+      +'<div style="color:var(--tx2);font-size:.7rem;margin-top:4px">Un solo leg sin valor arrastra todo el parlay a EV negativo. '
+      +'A largo plazo esto pierde dinero. Quita el leg en rojo.</div>';
+    regBtn.disabled=false; // se puede registrar igual (para trackear), pero avisado
+  } else if(!allHaveEdge){
+    bar.innerHTML='<div style="color:var(--gold);font-weight:700">⚠️ Edge por debajo del mínimo (+'+(EDGE_MIN*100).toFixed(0)+'%).</div>'
+      +'<div style="color:var(--tx2);font-size:.7rem;margin-top:4px">Hay ventaja pero es delgada. El margen de error del modelo puede comérsela.</div>';
+    regBtn.disabled=false;
+  } else {
+    // Kelly fraccionado al 25%
+    var kelly = ((cP*cO-1)/(cO-1));
+    var kFrac = Math.max(0, Math.min(0.15, kelly*0.25));
+    var kAmt  = Math.min(BET_MAX, Math.max(BET_MIN, Math.round(2000*kFrac/100)*100));
+    bar.innerHTML='<div style="color:var(--green);font-weight:700">✅ Todos los legs con edge ≥+'+(EDGE_MIN*100).toFixed(0)+'% sobre Pinnacle.</div>'
+      +'<div style="color:var(--tx2);font-size:.7rem;margin-top:4px">Kelly fraccionado (25%): apuesta sugerida <strong style="color:var(--green)">$'+kAmt+'</strong> '
+      +'· Prob combinada '+(cP*100).toFixed(1)+'% · Cuota '+cO.toFixed(2)+'x</div>';
+    if(betEl && !betEl.dataset.touched) betEl.value = kAmt;
+    regBtn.disabled=false;
   }
 }
 
-// ═══════════════════════════════════
-// REGISTER / RESOLVE
-// ═══════════════════════════════════
 function registerParlay(){
   if(parlayLegs.length<2)return;
   let bet=Math.min(BET_MAX,Math.max(BET_MIN,Math.round((parseFloat(document.getElementById('betAmt').value)||500)/100)*100));
@@ -2190,9 +2225,38 @@ async function loadAll(){
   renderPicksTable();
   renderParlays();
 
-  const withOdds=allGames.filter(g=>g._odds).length;
-  setSt('✓ '+allGames.length+' partidos · '+allPicks.length+' picks · '+withOdds+' con cuotas reales · '+fmtDate(selDate));
-  toast('✅ '+allPicks.length+' picks listos — '+fmtDate(selDate),'ok');
+  // ── RESUMEN SHARP ──
+  var withSharp = allGames.filter(function(g){ return g._odds && g._odds.hasSharp; }).length;
+  var totalOpts = 0, edgeCount = 0;
+  allPicks.forEach(function(p){
+    (p.picks||[]).forEach(function(pk){
+      totalOpts++;
+      if(pk.edge >= EDGE_MIN && pk.hasSharp) edgeCount++;
+    });
+  });
+
+  var banner = document.getElementById('edgeBanner');
+  if(banner){
+    banner.style.display='block';
+    if(edgeCount === 0){
+      banner.style.borderColor='var(--red)';
+      banner.innerHTML='<div style="font-family:Barlow Condensed,sans-serif;font-size:1rem;letter-spacing:2px;color:var(--red);font-weight:800">HOY NO HAY VALOR</div>'
+        +'<div style="font-size:.72rem;color:var(--tx2);margin-top:6px;line-height:1.6">'
+        +'Ningun pick supera el minimo de +'+(EDGE_MIN*100).toFixed(0)+'% de ventaja sobre Pinnacle. '
+        +'El mercado esta eficiente en los '+allGames.length+' partidos analizados.<br>'
+        +'<strong style="color:var(--txt)">La recomendacion profesional es no apostar hoy.</strong></div>';
+    } else {
+      banner.style.borderColor='var(--green)';
+      banner.innerHTML='<div style="font-family:Barlow Condensed,sans-serif;font-size:1rem;letter-spacing:2px;color:var(--green);font-weight:800">'+edgeCount+' PICK'+(edgeCount>1?'S':'')+' CON VALOR</div>'
+        +'<div style="font-size:.72rem;color:var(--tx2);margin-top:6px;line-height:1.6">'
+        +'De '+totalOpts+' opciones analizadas, '+edgeCount+' supera'+(edgeCount>1?'n':'')+' el minimo de +'+(EDGE_MIN*100).toFixed(0)+'% sobre Pinnacle. '
+        +'Marcados en verde abajo.</div>';
+    }
+  }
+
+  setSt('✓ '+allGames.length+' partidos · '+withSharp+' con Pinnacle · '+edgeCount+' con edge · '+fmtDate(selDate));
+  if(edgeCount===0) toast('Sin valor hoy — el mercado esta eficiente','warn');
+  else toast(edgeCount+' pick(s) con ventaja real sobre Pinnacle','ok');
 }
 
 function showManualReg(){
