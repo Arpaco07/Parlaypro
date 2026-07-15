@@ -411,6 +411,15 @@ function fmtDate(s){
   var mes=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   return dias[d.getDay()]+' '+d.getDate()+' '+mes[d.getMonth()];
 }
+function localDateMX(iso){
+  if(!iso) return '';
+  try{
+    var d = new Date(iso);
+    // Convertir a fecha en zona horaria de México
+    var mx = new Date(d.toLocaleString('en-US',{timeZone:'America/Mexico_City'}));
+    return mx.getFullYear()+'-'+String(mx.getMonth()+1).padStart(2,'0')+'-'+String(mx.getDate()).padStart(2,'0');
+  }catch(e){ return (iso||'').slice(0,10); }
+}
 function fmtTime(iso){
   if(!iso) return '';
   try{
@@ -513,27 +522,42 @@ async function loadAll(){
     var lg = active[i];
     setOv('Cargando '+lg.name+'…', lg.oddsKey);
     try{
-      var mk = marketsFor(lg.sport);
-      var url = 'https://api.the-odds-api.com/v4/sports/'+lg.oddsKey+'/odds'
-        + '?apiKey='+ODDS_KEY
-        + '&bookmakers='+SHARP_BOOK
-        + '&markets='+mk
-        + '&oddsFormat=decimal&dateFormat=iso';
-      var r = await fetch(url,{signal:AbortSignal.timeout(9000)});
-      if(!r.ok){
-        errors.push(lg.name+': HTTP '+r.status);
-        console.warn('['+lg.name+'] HTTP '+r.status);
+      // Intentar con todos los mercados; si falla 422, reintentar con los básicos
+      var marketSets = [marketsFor(lg.sport), 'h2h,totals', 'h2h'];
+      var data = null;
+      var lastStatus = 0;
+      for(var ms=0; ms<marketSets.length; ms++){
+        var url = 'https://api.the-odds-api.com/v4/sports/'+lg.oddsKey+'/odds'
+          + '?apiKey='+ODDS_KEY
+          + '&bookmakers='+SHARP_BOOK
+          + '&markets='+marketSets[ms]
+          + '&oddsFormat=decimal&dateFormat=iso';
+        var r = await fetch(url,{signal:AbortSignal.timeout(9000)});
+        lastStatus = r.status;
+        if(r.ok){
+          data = await r.json();
+          console.log('['+lg.name+'] OK con mercados: '+marketSets[ms]);
+          break;
+        }
+        // 422 = mercado no soportado → probar el siguiente set más simple
+        if(r.status !== 422){
+          break; // otro error (401, 429, etc) → no tiene caso reintentar mercados
+        }
+        console.warn('['+lg.name+'] 422 con "'+marketSets[ms]+'", reintentando...');
+      }
+      if(data === null){
+        errors.push(lg.name+': HTTP '+lastStatus);
+        console.warn('['+lg.name+'] falló con HTTP '+lastStatus);
         continue;
       }
-      var data = await r.json();
       if(!Array.isArray(data)){ errors.push(lg.name+': respuesta inválida'); continue; }
       console.log('['+lg.name+'] '+data.length+' partidos de la API');
 
       data.forEach(function(ev){
         var pinn = (ev.bookmakers||[]).find(function(b){ return b.key===SHARP_BOOK; });
         if(!pinn) return;                       // sin Pinnacle no hay referencia → skip
-        // Filtrar por fecha seleccionada
-        var evDate = (ev.commence_time||'').slice(0,10);
+        // Filtrar por fecha seleccionada (en hora de México, no UTC)
+        var evDate = localDateMX(ev.commence_time);
         if(evDate !== selDate) return;
 
         var g = {
